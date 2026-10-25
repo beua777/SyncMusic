@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SyncMusic</title>
+<meta name="description" content="삼성 뮤직 스타일 음악 플레이어 + 같은 Wi-Fi 폰 자동 동기화">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/app.svg" type="image/svg+xml">
+<meta name="theme-color" content="#f6f6f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/js/app.js"></script>
+</head>
+<body>
+<main id="main">
+  <header id="appbar">
+    <div class="bar">
+      <button id="back" class="icon-btn" aria-label="뒤로" hidden></button>
+      <h1 id="bar-title">음악</h1>
+      <label class="search" id="searchbox" hidden><span id="search-icon"></span><input id="search-input" type="search" placeholder="곡, 앨범, 아티스트 (초성도 돼요)" autocomplete="off" spellcheck="false"></label>
+      <div class="bar-actions">
+        <button id="btn-search" class="icon-btn" aria-label="검색 (Ctrl+F)" title="검색 (Ctrl+F)"></button>
+        <button id="btn-more" class="icon-btn" aria-label="더 보기"></button>
+      </div>
+    </div>
+    <nav id="tabs" aria-label="라이브러리">
+      <a class="tab" href="#/tracks" data-tab="tracks">트랙</a>
+      <a class="tab" href="#/playlists" data-tab="playlists">재생목록</a>
+      <a class="tab" href="#/albums" data-tab="albums">앨범</a>
+      <a class="tab" href="#/artists" data-tab="artists">아티스트</a>
+      <a class="tab" href="#/folders" data-tab="folders">폴더</a>
+    </nav>
+  </header>
+  <section id="view"></section>
+</main>
+<div id="selbar" class="float-bar" hidden></div>
+<div id="phone-chip" class="float-bar" hidden></div>
+<footer id="mini"></footer>
+<section id="np" aria-hidden="true" aria-label="지금 재생 중"></section>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="menu" role="menu" hidden></div>
+<dialog id="dialog"></dialog>
+</body>
+</html>

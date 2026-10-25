@@ -1,0 +1,21 @@
+{
+  "name": "syncmusic-pc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "삼성 뮤직 스타일 Windows 음악 플레이어 + 같은 Wi-Fi 폰 자동 동기화",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "app": "node launch.js",
+    "test": "node --test",
+    "demo-music": "node tools/make-test-music.js"
+  },
+  "dependencies": {
+    "music-metadata": "^12.2.3",
+    "pretendard": "^1.3.9"
+  }
+}

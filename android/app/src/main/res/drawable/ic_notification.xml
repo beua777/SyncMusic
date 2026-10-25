@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 상태 표시줄용 흰색 음표 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8.5,5.6L20,3L20,5.6L10.5,7.7L10.5,17L8.5,17Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18,3.5L20,3L20,15L18,15Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.75,17a2.75,2.75 0,1 0,5.5 0a2.75,2.75 0,1 0,-5.5 0z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14.25,15a2.75,2.75 0,1 0,5.5 0a2.75,2.75 0,1 0,-5.5 0z" />
+</vector>

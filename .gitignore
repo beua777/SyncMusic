@@ -1,0 +1,20 @@
+# PC
+pc/node_modules/
+pc/demo-music/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/captures/
+
+# 내려받은 APK
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
