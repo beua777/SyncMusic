@@ -53,6 +53,12 @@ const P = {
   info: '<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2"/><circle cx="12" cy="7.9" r="1" fill="currentColor" stroke="none"/>',
   wifi: '<path d="M3 9a13 13 0 0 1 18 0"/><path d="M6.2 12.4a8.5 8.5 0 0 1 11.6 0"/><path d="M9.3 15.7a4 4 0 0 1 5.4 0"/><circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.6 0l3-3a4 4 0 0 0-5.6-5.6l-1 1"/><path d="M14 10a4 4 0 0 0-5.6 0l-3 3a4 4 0 0 0 5.6 5.6l1-1"/>',
+  palette:
+    '<path d="M12 3.6a8.4 8.4 0 1 0 0 16.8c1.1 0 1.8-.7 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.7 1.8-1.7h2a4.3 4.3 0 0 0 4.3-4.3c0-3.7-3.9-6.7-8.9-6.7z"/><circle cx="7.6" cy="11.3" r="1.25" fill="currentColor" stroke="none"/><circle cx="10.3" cy="7.5" r="1.25" fill="currentColor" stroke="none"/><circle cx="15" cy="7.7" r="1.25" fill="currentColor" stroke="none"/>',
+  vizMirror: '<path d="M5 10v4M9.5 6v12M14 8.5v7M18.5 10.5v3"/>',
+  vizWave: '<path d="M3 14.5c2 0 2.6-6.5 4.8-6.5s2.9 9 5.2 9 2.7-6 4.9-6c1.4 0 2 1.4 3.1 1.4"/>',
+  vizCircle:
+    '<circle cx="12" cy="12" r="4"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2M5.9 5.9l1.6 1.6M16.5 16.5l1.6 1.6M5.9 18.1l1.6-1.6M16.5 7.5l1.6-1.6"/>',
 };
 
 export function icon(name, cls = '') {

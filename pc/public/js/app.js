@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { Player } from './player.js';
 import { store } from './store.js';
 import { $, debounce } from './util.js';
-import { markPlaying, noCover, reloadPlaylists } from './ui/common.js';
+import { checkLetterbox, markPlaying, noCover, reloadPlaylists } from './ui/common.js';
 import { openMenu, toast } from './ui/dom.js';
 import { closeNp, initNowPlaying, isNpOpen, openNp, retint, showPhoneChip, sleepDialog } from './ui/nowplaying.js';
 import { bindSettingsEvents, onScanProgress, settingsView } from './ui/settings.js';
@@ -114,6 +114,13 @@ function initShell() {
   bindSettingsEvents($('#view'));
   bindSelectionBar();
 
+  document.addEventListener(
+    'load',
+    (e) => {
+      if (e.target.tagName === 'IMG' && e.target.hasAttribute('data-cover')) checkLetterbox(e.target);
+    },
+    true,
+  );
   // 커버가 없으면 이미지를 빼서 기본 음표 그림이 보이게
   document.addEventListener(
     'error',
@@ -174,6 +181,7 @@ function openAppMenu(anchor) {
     [
       { icon: 'phone', label: '휴대폰 동기화', run: () => go('#/settings') },
       { icon: 'moon', label: '수면 타이머', run: () => sleepDialog() },
+      { icon: 'palette', label: '디자인 꾸미기', run: () => openNp('design') },
       {
         icon: 'sync',
         label: '음악 폴더 다시 검색',
@@ -221,6 +229,15 @@ function connectEvents() {
   es.addEventListener('open', () => {
     clearTimeout(offlineTimer);
     offlineTimer = null;
+    // 서버가 새 버전으로 다시 켜졌으면(화면 파일이 바뀜) 열려 있던 창도 새로 고친다. 듣던 곡·위치는 저장돼 있음
+    get('/api/ping')
+      .then((p) => {
+        if (p.build && store.app.build && p.build !== store.app.build) {
+          ctx.player.save(true);
+          location.reload();
+        }
+      })
+      .catch(() => {});
   });
   es.addEventListener('error', () => {
     offlineTimer ??= setTimeout(() => toast('SyncMusic 서버에 연결할 수 없어요. 프로그램을 다시 실행해 주세요.', 8000), 5000);

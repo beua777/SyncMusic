@@ -1,8 +1,11 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APP_NAME, APP_VERSION, AUDIO_TYPES } from './config.js';
+import { COVER_ID } from './covers.js';
 import { matchItems, parsePlaylistFile, safeFileName, writeM3u } from './m3u.js';
 import { readLyrics } from './tags.js';
 import {
@@ -36,6 +39,23 @@ const PL = '([\\w-]{1,40})';
 
 export const publicTrack = (t) => ({ ...t, dir: path.dirname(t.path) });
 
+// 화면 파일이 바뀌었는지 알아보는 값. 열려 있던 창이 서버에 다시 붙을 때 다르면 새로 고친다
+export function uiBuild(dir = PUBLIC) {
+  const h = crypto.createHash('sha1');
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else {
+        const st = fs.statSync(p);
+        h.update(`${path.relative(dir, p)}|${st.size}|${Math.round(st.mtimeMs)}\n`);
+      }
+    }
+  };
+  walk(dir);
+  return h.digest('hex').slice(0, 12);
+}
+
 // 이 PC 안에서만 쓰는 화면용 서버 (127.0.0.1)
 export function createUiServer(app) {
   const { library, playlists, settings, sync, events, covers, state } = app;
@@ -47,12 +67,13 @@ export function createUiServer(app) {
     return t;
   };
   const ok = (res, obj = { ok: true }) => sendJson(res, 200, obj);
+  const build = uiBuild();
 
-  route('GET', '/api/ping', (req, res) => ok(res, { app: APP_NAME, version: APP_VERSION }));
+  route('GET', '/api/ping', (req, res) => ok(res, { app: APP_NAME, version: APP_VERSION, build }));
 
   route('GET', '/api/bootstrap', (req, res) =>
     ok(res, {
-      app: { name: APP_NAME, version: APP_VERSION, dataDir: app.dataDir, host: os.hostname() },
+      app: { name: APP_NAME, version: APP_VERSION, build, dataDir: app.dataDir, host: os.hostname() },
       tracks: library.list().map(publicTrack),
       playlists: playlists.all(),
       settings: settings.data,
@@ -71,13 +92,23 @@ export function createUiServer(app) {
     const t = trackOr404(m[1]);
     sendFile(req, res, t.path, AUDIO_TYPES[path.extname(t.path).toLowerCase()] || 'application/octet-stream', { 'Cache-Control': 'no-cache' });
   });
-  route('GET', `/api/tracks/${ID}/cover`, async (req, res, m) => {
-    const c = await covers.get(trackOr404(m[1]));
+  // 커버 ID = 그림 내용의 해시라서 주소가 같으면 그림도 같다 (오래 캐시해도 됨)
+  route('GET', `/api/covers/(${COVER_ID})`, (req, res, m) => {
+    const c = covers.find(m[1]);
     if (!c) {
-      res.writeHead(404, { 'Cache-Control': 'max-age=300' });
+      res.writeHead(404, { 'Cache-Control': 'no-cache' });
       return res.end();
     }
-    sendFile(req, res, c.file, c.format, { 'Cache-Control': 'max-age=86400' });
+    sendFile(req, res, c.file, c.format, { 'Cache-Control': 'max-age=31536000, immutable' });
+  });
+  route('GET', `/api/tracks/${ID}/cover`, (req, res, m) => {
+    const t = trackOr404(m[1]);
+    const c = t.cover ? covers.find(t.cover) : null;
+    if (!c) {
+      res.writeHead(404, { 'Cache-Control': 'no-cache' });
+      return res.end();
+    }
+    sendFile(req, res, c.file, c.format, { 'Cache-Control': 'no-cache' });
   });
   route('GET', `/api/tracks/${ID}/lyrics`, async (req, res, m) => ok(res, await readLyrics(trackOr404(m[1]).path)));
   route('POST', `/api/tracks/${ID}/played`, (req, res, m) => {

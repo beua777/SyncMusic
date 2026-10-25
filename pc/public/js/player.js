@@ -387,11 +387,12 @@ export class Player extends EventTarget {
   updateMetadata() {
     const t = this.track;
     if (!t || !('mediaSession' in navigator)) return;
+    const cover = store.coverIdFor(t);
     navigator.mediaSession.metadata = new MediaMetadata({
       title: t.title,
       artist: t.artist,
       album: t.album,
-      artwork: [{ src: coverUrl(store.coverIdFor(t)), sizes: '512x512' }],
+      artwork: cover ? [{ src: coverUrl(cover) }] : [],
     });
   }
 

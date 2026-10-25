@@ -17,7 +17,7 @@ export const put = (p, body = {}) => api(p, { method: 'PUT', body });
 export const del = (p) => api(p, { method: 'DELETE' });
 
 export const audioUrl = (id) => `/api/tracks/${id}/audio`;
-export const coverUrl = (id) => `/api/tracks/${id}/cover`;
+export const coverUrl = (id) => `/api/covers/${id}`; // 커버 ID = 그림 내용의 해시 (곡마다 store.coverIdFor)
 
 export function subscribe(handlers) {
   const es = new EventSource('/api/events');

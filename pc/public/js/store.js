@@ -91,7 +91,7 @@ export const store = {
       a.tracks.sort(
         (x, y) => (x.discNo || 1) - (y.discNo || 1) || (x.trackNo || 9999) - (y.trackNo || 9999) || collator.compare(x.title, y.title),
       );
-      a.coverId = a.tracks[0].id;
+      a.coverId = a.tracks.find((t) => t.cover)?.cover || null; // 커버가 있는 첫 곡
       a.duration = a.tracks.reduce((s, t) => s + (t.duration || 0), 0);
       if (!a.artist) {
         const top = [...a.counts.entries()].sort((x, y) => y[1] - x[1]);
@@ -103,7 +103,7 @@ export const store = {
     }
     for (const ar of artists.values()) {
       ar.albums = [...ar.albumKeys].map((k) => albums.get(k)).sort((x, y) => (y.year || 0) - (x.year || 0) || collator.compare(x.name, y.name));
-      ar.coverId = ar.albums[0].coverId;
+      ar.coverId = ar.albums.find((a) => a.coverId)?.coverId || null;
       ar.tracks.sort((x, y) => collator.compare(x.title, y.title));
       delete ar.albumKeys;
       ar._s = normSearch(ar.name);
@@ -120,8 +120,9 @@ export const store = {
     this.folderByDir = folders;
   },
 
+  // 곡마다 자기 커버 (같은 폴더·앨범이라도 곡마다 그림이 다를 수 있음). 없으면 기본 음표 그림
   coverIdFor(t) {
-    return this.albumByKey.get(this.albumKeyOf.get(t.id))?.coverId || t.id;
+    return t?.cover || null;
   },
 
   albumOf(t) {

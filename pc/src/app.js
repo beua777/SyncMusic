@@ -21,18 +21,15 @@ export async function createApp(opts = {}) {
   const lanHost = opts.lanHost || process.env.SYNCMUSIC_LAN_HOST || '0.0.0.0';
 
   const settings = new Settings(dataDir, opts.musicFolders);
-  const library = new Library({ dataDir, getFolders: () => settings.data.musicFolders });
+  const covers = new Covers(dataDir);
+  const library = new Library({ dataDir, getFolders: () => settings.data.musicFolders, covers });
   const playlists = new Playlists({ dataDir });
   const state = new JsonStore(path.join(dataDir, 'state.json'), {});
-  const covers = new Covers(dataDir);
   const events = new EventHub();
   const sync = new SyncService({ dataDir, library, playlists, settings });
 
   library.on('remap', (oldId, newId) => playlists.remap(oldId, newId));
-  library.on('changed', (info) => {
-    covers.clearMemo();
-    events.emit('library', info);
-  });
+  library.on('changed', (info) => events.emit('library', info));
   library.on('progress', (s) => events.emit('scan', s));
   playlists.on('changed', (info) => events.emit('playlists', info));
   sync.on('pairing', (p) => events.emit('pairing', p));

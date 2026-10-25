@@ -10,7 +10,31 @@ export const EQ = '<span class="eq"><i></i><i></i><i></i></span>';
 
 // 커버 그림 (없으면 CSS의 음표 기본 그림이 보인다). 한 번 없다고 확인된 커버는 다시 요청하지 않는다
 export const noCover = new Set();
-export const coverImg = (id) => (id && !noCover.has(id) ? `<img src="${coverUrl(id)}" alt="" loading="lazy" decoding="async" data-cover="${id}">` : '');
+export const letterboxed = new Set(); // 위아래에 검은 띠가 있는 4:3 그림 (옛 유튜브 썸네일)
+export const coverImg = (id) =>
+  id && !noCover.has(id)
+    ? `<img src="${coverUrl(id)}" alt="" loading="lazy" decoding="async" data-cover="${id}"${letterboxed.has(id) ? ' class="lb"' : ''}>`
+    : '';
+
+// 4:3 그림의 맨 위·아래 줄이 거의 검으면 띠로 보고, 확대해서 띠가 정사각형 밖으로 나가게 한다
+export function checkLetterbox(img) {
+  const { naturalWidth: w, naturalHeight: h } = img;
+  if (!w || !h || Math.abs(w / h - 4 / 3) > 0.03 || img.closest('.mosaic')) return;
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 24;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, 32, 24);
+  const dark = (y) => {
+    const d = g.getImageData(0, y, 32, 1).data;
+    for (let i = 0; i < d.length; i += 4) if (Math.max(d[i], d[i + 1], d[i + 2]) > 28) return false;
+    return true;
+  };
+  if ([0, 1, 22, 23].every(dark)) {
+    letterboxed.add(img.dataset.cover);
+    img.classList.add('lb');
+  }
+}
 
 export function mosaic(ids, cls = 'thumb') {
   const covers = [];
@@ -19,7 +43,7 @@ export function mosaic(ids, cls = 'thumb') {
     const t = store.tracks.get(id);
     if (!t) continue;
     const c = store.coverIdFor(t);
-    if (seen.has(c)) continue;
+    if (!c || seen.has(c)) continue;
     seen.add(c);
     covers.push(c);
     if (covers.length === 4) break;

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { AUDIO_TYPES, UNKNOWN } from './config.js';
 import { quickHash } from './quickhash.js';
-import { readTrackInfo } from './tags.js';
+import { readCover, readTrackInfo } from './tags.js';
 import { JsonStore } from './util/jsonfile.js';
 
 const SKIP_DIRS = new Set(['$recycle.bin', 'system volume information', 'node_modules', '.git']);
@@ -19,9 +19,10 @@ export const normArtist = (s) => (UNKNOWN_ARTISTS.has(String(s ?? '').trim().toL
 // 곡 ID = 파일 내용의 quick hash. 파일 하나하나(files)와 곡(tracks)을 따로 관리해서
 // 같은 파일이 두 폴더에 있으면 곡 하나로 보고, 태그를 고쳐 해시가 바뀌면 옛 ID를 새 ID로 옮긴다(remap).
 export class Library extends EventEmitter {
-  constructor({ dataDir, getFolders }) {
+  constructor({ dataDir, getFolders, covers = null }) {
     super();
     this.getFolders = getFolders;
+    this.covers = covers;
     this.store = new JsonStore(path.join(dataDir, 'library.json'), { version: 1, tracks: {}, files: {} });
     this.tracks = new Map(Object.entries(this.store.data.tracks));
     this.files = new Map(Object.entries(this.store.data.files)); // 경로 키 → { path, size, mtime, id }
@@ -125,12 +126,18 @@ export class Library extends EventEmitter {
       this.emit('remap', oldId, newId);
     }
 
+    const coversChanged = await this.refreshCovers();
+    if (this.covers) {
+      const used = new Set([...this.tracks.values()].map((t) => t.cover).filter(Boolean));
+      await this.covers.prune((id) => used.has(id));
+    }
+
     this.status = { scanning: false, done: todo.length, total: todo.length, lastScan: Date.now() };
     this.metaIndex = null;
     this.nameIndex = null;
     this.persist();
     this.emit('progress', { ...this.status });
-    if (todo.length || filesRemoved || removed.length) {
+    if (todo.length || filesRemoved || removed.length || coversChanged) {
       this.emit('changed', { added, removed: removed.length, total: this.tracks.size });
     }
   }
@@ -187,11 +194,46 @@ export class Library extends EventEmitter {
     const newInfo = new Map();
     if (!this.tracks.has(id)) newInfo.set(id, await readTrackInfo(file));
     const { added } = this.rebuildTracks(newInfo);
+    await this.refreshCovers([id]);
     this.metaIndex = null;
     this.nameIndex = null;
     this.persist();
     this.emit('changed', { added, removed: 0, total: this.tracks.size });
     return this.tracks.get(id);
+  }
+
+  // 곡마다 자기 커버: 태그에 든 그림(곡마다 한 번만 읽음) → 없으면 같은 폴더의 cover.jpg (검색할 때마다 다시 봄).
+  // 같은 폴더·앨범 이름이어도 곡마다 그림이 다를 수 있다 (유튜브에서 받은 곡 등). 바뀐 곡 수를 돌려준다.
+  async refreshCovers(ids = null) {
+    if (!this.covers) return 0;
+    const list = ids ? ids.map((id) => this.tracks.get(id)).filter(Boolean) : [...this.tracks.values()];
+    const folder = new Map();
+    let changed = 0;
+    await pool(list, 4, async (t) => {
+      try {
+        let cover = t.cover ?? null;
+        let from = t.coverFrom;
+        if (from === undefined) {
+          const pic = await readCover(t.path);
+          cover = pic ? await this.covers.save(pic.data, pic.format) : null;
+          from = pic ? 'tag' : null;
+        }
+        if (from !== 'tag') {
+          const dir = path.dirname(t.path);
+          if (!folder.has(dir)) folder.set(dir, this.covers.folderCover(dir).catch(() => null));
+          cover = await folder.get(dir);
+          from = cover ? 'folder' : null;
+        }
+        if (cover !== (t.cover ?? null) || from !== t.coverFrom) {
+          t.cover = cover;
+          t.coverFrom = from;
+          changed++;
+        }
+      } catch {
+        // 읽을 수 없는 파일은 다음 검색 때 다시
+      }
+    });
+    return changed;
   }
 
   // 내용이 다른 같은 곡(다른 인코딩 등)을 제목+가수(+길이 ±2초)로 찾는다

@@ -5,7 +5,7 @@ import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { $, esc, fmtAgo, fmtClock } from '../util.js';
 import { confirmDialog, openMenu, promptText, toast } from './dom.js';
-import { sleepDialog } from './nowplaying.js';
+import { openNp, sleepDialog } from './nowplaying.js';
 
 let pairTimer = null;
 
@@ -124,7 +124,8 @@ ${
     ['system', '시스템'],
     ['light', '라이트'],
     ['dark', '다크'],
-  ])}</div></div>
+  ])}</div>
+  <div class="set-row click" data-act="design">${icon('palette')}<div class="label"><b>디자인 꾸미기</b><small>포인트 색 · 재생 화면 배경 색(앨범 색 · 랜덤 · 무지개 · 직접 고르기) · 오디오 스펙트럼</small></div></div></div>
 
 <div class="group-title">Windows</div>
 <div class="card">
@@ -232,6 +233,8 @@ export function bindSettingsEvents(root) {
         case 'sleep':
           await sleepDialog();
           return ctx.refresh({ keepScroll: true });
+        case 'design':
+          return openNp('design');
         case 'shortcut':
           await post('/api/system/shortcut');
           return toast('바탕화면에 바로가기를 만들었어요', 3000);

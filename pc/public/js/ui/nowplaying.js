@@ -2,16 +2,20 @@
 import { coverUrl, get, post } from '../api.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
-import { $, $$, dominantColor, esc, fmtClock, fmtTime, rgbToHsl } from '../util.js';
+import { $, $$, dominantColor, esc, fmtClock, fmtTime } from '../util.js';
+import { Visualizer } from '../visualizer.js';
 import { addToPlaylistDialog, coverImg, EQ, markPlaying, toggleFavorite, trackMenu } from './common.js';
+import { applyDesign, designTrackChanged, initDesign, renderDesign, setAlbumColor } from './design.js';
 import { dialog, openMenu, sortable, toast } from './dom.js';
 
 let player;
+let viz;
 let panel = readPref('np.panel', 'queue');
 let seeking = false;
 let lyrics = { id: null, synced: null, idx: -1 };
 let lyricsScrollHold = 0;
-let lastTint = null;
+let tintFor;
+let lastTrackId;
 let phoneDismissedAt = 0;
 
 const REPEAT_LABEL = { off: '반복 안 함', all: '전체 반복', one: '한 곡 반복' };
@@ -28,6 +32,7 @@ function readPref(k, d) {
 export function initNowPlaying(p) {
   player = p;
   $('#mini').innerHTML = `<div class="mini-card">
+  <canvas class="viz viz-mini" id="viz-mini" aria-hidden="true"></canvas>
   <div class="mini-progress"><i></i></div>
   <div class="mini-left" data-act="open-np" title="재생 화면 열기">
     <div class="thumb" id="mini-thumb"></div>
@@ -47,6 +52,7 @@ export function initNowPlaying(p) {
 </div>`;
 
   $('#np').innerHTML = `<div class="np-bg"></div>
+<canvas class="viz viz-bottom" id="viz-bottom" aria-hidden="true"></canvas>
 <div class="np-top">
   <button class="icon-btn" data-act="close-np" aria-label="닫기" title="닫기 (Esc)">${icon('down')}</button>
   <div class="np-source" id="np-source"></div>
@@ -54,7 +60,8 @@ export function initNowPlaying(p) {
 </div>
 <div class="np-body">
   <div class="np-main">
-    <div class="cover np-art" id="np-art"></div>
+    <div class="np-stage"><canvas class="viz viz-ring" id="viz-ring" aria-hidden="true"></canvas><div class="cover np-art" id="np-art"></div></div>
+    <canvas class="viz viz-strip" id="viz-strip" aria-hidden="true"></canvas>
     <div class="np-titlebar">
       <div class="np-titles"><h2 id="np-title"></h2><a id="np-artist" href="#"></a></div>
       <button class="icon-btn heart" data-act="fav" id="np-fav" aria-label="즐겨찾기">${icon('heart')}</button>
@@ -75,17 +82,19 @@ export function initNowPlaying(p) {
       <button class="icon-btn panel-toggle" data-act="panel-lyrics" aria-label="가사" title="가사">${icon('lyrics')}</button>
       <div class="vol"><button class="icon-btn" data-act="mute" aria-label="음소거"></button><input type="range" id="np-vol" min="0" max="1" step="0.01" aria-label="음량"></div>
       <button class="icon-btn" data-act="sleep" id="np-sleep" aria-label="수면 타이머" title="수면 타이머">${icon('moon')}</button>
+      <button class="icon-btn" data-act="panel-design" aria-label="디자인 꾸미기" title="디자인 꾸미기">${icon('palette')}</button>
       <button class="icon-btn panel-toggle" data-act="panel-queue" aria-label="재생 순서" title="재생 순서">${icon('queue')}</button>
     </div>
   </div>
   <aside class="np-side">
     <div class="np-side-head">
-      <div class="seg" id="np-tabs"><button data-panel="queue">재생 순서</button><button data-panel="lyrics">가사</button></div>
+      <div class="seg" id="np-tabs"><button data-panel="queue">재생 순서</button><button data-panel="lyrics">가사</button><button data-panel="design">디자인</button></div>
       <button class="icon-btn panel-close" data-act="panel-close" aria-label="닫기">${icon('close')}</button>
     </div>
     <div class="np-side-sub" id="np-side-sub"></div>
     <div class="np-panel" id="np-queue"></div>
     <div class="np-panel" id="np-lyrics" hidden></div>
+    <div class="np-panel" id="np-design" hidden></div>
   </aside>
 </div>`;
 
@@ -160,6 +169,13 @@ export function initNowPlaying(p) {
   });
   matchMedia('(min-width: 1000px)').addEventListener('change', () => refreshPanel());
 
+  viz = new Visualizer(player.audio);
+  viz.add($('#viz-strip'), 'strip', isNpOpen);
+  viz.add($('#viz-ring'), 'ring', isNpOpen);
+  viz.add($('#viz-bottom'), 'bottom', isNpOpen);
+  viz.add($('#viz-mini'), 'mini', () => !isNpOpen());
+  initDesign(viz, $('#np-design'));
+
   showPanel(panel, false);
   onTrack();
   onState();
@@ -181,6 +197,7 @@ export function openNp(withPanel) {
   }
   if (withPanel) showPanel(withPanel, true);
   else refreshPanel(true);
+  viz.wake(true);
 }
 
 export function closeNp(fromPopstate = false) {
@@ -189,6 +206,8 @@ export function closeNp(fromPopstate = false) {
   np.classList.remove('open', 'side-open');
   np.setAttribute('aria-hidden', 'true');
   if (!fromPopstate && history.state?.np) history.back();
+  viz.setDemo(false);
+  viz.wake(true);
 }
 
 function showPanel(name, open = false) {
@@ -201,6 +220,8 @@ function showPanel(name, open = false) {
   for (const b of $$('#np-tabs button')) b.classList.toggle('on', b.dataset.panel === name);
   $('#np-queue').hidden = name !== 'queue';
   $('#np-lyrics').hidden = name !== 'lyrics';
+  $('#np-design').hidden = name !== 'design';
+  $('#np').classList.toggle('design-open', name === 'design');
   if (open && !isWide()) $('#np').classList.add('side-open');
   refreshPanel(true);
 }
@@ -210,6 +231,8 @@ const panelVisible = (name) => isNpOpen() && panel === name && (isWide() || $('#
 function refreshPanel(scrollToCurrent = false) {
   if (panelVisible('queue')) renderQueue(scrollToCurrent);
   else if (panelVisible('lyrics')) loadLyrics();
+  else if (panelVisible('design')) renderDesign();
+  viz?.setDemo(panelVisible('design')); // 멈춰 있어도 디자인 탭에서는 스펙트럼이 움직여서 바로 보임
   updateSideSub();
 }
 
@@ -228,6 +251,10 @@ function onTrack() {
   a.href = t ? `#/artist/${encodeURIComponent(t.artist)}` : '#';
   document.title = t ? `${t.title} - ${t.artist} · SyncMusic` : 'SyncMusic';
   updateFav();
+  if (t?.id !== lastTrackId) {
+    lastTrackId = t?.id;
+    designTrackChanged();
+  }
   tint(coverId);
   markPlaying(document);
   $('#np-source').textContent = sourceLabel();
@@ -316,6 +343,10 @@ function sourceLabel() {
 function updateSideSub() {
   const q = player.queue;
   const el = $('#np-side-sub');
+  if (panel === 'design') {
+    el.textContent = '고르면 바로 바뀌고 저장돼요';
+    return;
+  }
   if (panel !== 'queue') {
     el.textContent = player.track ? `${player.track.title} · ${player.track.artist}` : '';
     return;
@@ -323,31 +354,19 @@ function updateSideSub() {
   el.innerHTML = `${q.length}곡 · ${q.shuffle ? `<span class="badge">${icon('shuffle')}셔플</span> 섞인 순서` : '목록 순서'}${q.source?.name ? ` · ${esc(q.source.name)}` : ''}`;
 }
 
-// 앨범 커버 색을 재생 화면 배경에 깐다 (삼성 뮤직처럼)
+// 앨범 커버의 대표 색 → 재생 화면 배경·스펙트럼 색 (삼성 뮤직처럼). 실제로 어떻게 쓸지는 디자인 설정(design.js)
 async function tint(coverId) {
-  const np = $('#np');
-  if (!coverId) {
-    lastTint = null;
-    np.style.removeProperty('--np-tint');
-    return;
-  }
-  const rgb = await dominantColor(coverUrl(coverId));
-  if (player.track && store.coverIdFor(player.track) !== coverId) return;
-  lastTint = rgb;
-  applyTint();
+  if (coverId === tintFor) return;
+  tintFor = coverId;
+  const rgb = coverId ? await dominantColor(coverUrl(coverId)) : null;
+  if (tintFor !== coverId) return; // 그사이 곡이 또 바뀜
+  setAlbumColor(rgb);
 }
 
+// 테마나 디자인 설정이 바뀌었을 때
 export function retint() {
-  applyTint();
-}
-
-function applyTint() {
-  const np = $('#np');
-  if (!lastTint) return np.style.removeProperty('--np-tint');
-  const [h, s] = rgbToHsl(lastTint);
-  const theme = document.documentElement.dataset.theme;
-  const dark = theme === 'dark' || (!theme && matchMedia('(prefers-color-scheme: dark)').matches);
-  np.style.setProperty('--np-tint', `hsl(${Math.round(h)} ${Math.min(60, Math.round(s))}% ${dark ? 22 : 86}%)`);
+  applyDesign();
+  if (panelVisible('design')) renderDesign();
 }
 
 // ───── 재생 순서 (S7: 실제로 나올 순서 그대로, 끌어서 바꾸기) ─────
@@ -462,6 +481,8 @@ function onClick(e) {
       return showPanel('lyrics', true);
     case 'panel-queue':
       return showPanel('queue', true);
+    case 'panel-design':
+      return showPanel('design', true);
     case 'panel-close':
       return $('#np').classList.remove('side-open');
     case 'q-remove':
@@ -476,6 +497,7 @@ function npMenu(anchor) {
   const items = t ? trackMenu(t).filter((it) => it === '-' || !['다음에 재생', '재생 대기열에 추가'].includes(it.label)) : [];
   if (items.length) items.push('-');
   items.push(
+    { icon: 'palette', label: '디자인 꾸미기', run: () => showPanel('design', true) },
     { icon: 'moon', label: player.sleep ? '수면 타이머 끄기' : '수면 타이머', run: () => (player.sleep ? (player.clearSleep(), toast('수면 타이머를 껐어요')) : sleepDialog()) },
     { icon: 'trash', label: '재생 대기열 비우기', danger: true, run: () => player.clearQueue() },
   );

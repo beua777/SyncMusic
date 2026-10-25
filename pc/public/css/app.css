@@ -27,6 +27,8 @@
   --shadow-2: 0 8px 30px rgba(0, 0, 0, 0.14);
   --scrim: rgba(0, 0, 0, 0.32);
   --np-tint: #dfe5ee;
+  --rb-s: 80%;
+  --rb-l: 84%;
   --glass: rgba(246, 246, 246, 0.82);
   --placeholder-a: #e9ecf1;
   --placeholder-b: #d9dee6;
@@ -59,6 +61,8 @@
     --shadow-2: 0 10px 34px rgba(0, 0, 0, 0.6);
     --scrim: rgba(0, 0, 0, 0.55);
     --np-tint: #1b2230;
+    --rb-s: 62%;
+    --rb-l: 25%;
     --glass: rgba(0, 0, 0, 0.78);
     --placeholder-a: #2a2d33;
     --placeholder-b: #1e2126;
@@ -84,6 +88,8 @@
   --shadow-2: 0 10px 34px rgba(0, 0, 0, 0.6);
   --scrim: rgba(0, 0, 0, 0.55);
   --np-tint: #1b2230;
+  --rb-s: 62%;
+  --rb-l: 25%;
   --glass: rgba(0, 0, 0, 0.78);
   --placeholder-a: #2a2d33;
   --placeholder-b: #1e2126;
@@ -530,6 +536,12 @@ svg.i {
   object-fit: cover;
 }
 
+/* 4:3 그림의 위아래 검은 띠(옛 유튜브 썸네일)를 정사각형 밖으로 */
+.thumb img.lb,
+.cover img.lb {
+  transform: scale(1.34);
+}
+
 .thumb.round {
   border-radius: 50%;
 }
@@ -939,6 +951,24 @@ body:not(.is-playing) .eq i {
   overflow: hidden;
 }
 
+.viz-mini {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.2;
+}
+
+#mini.viz-on .viz-mini {
+  display: block;
+}
+
+.mini-left,
+.mini-center,
+.mini-right {
+  position: relative;
+}
+
 .mini-progress {
   position: absolute;
   left: 0;
@@ -1109,9 +1139,35 @@ input[type='range']:hover::-webkit-slider-thumb {
   position: absolute;
   inset: 0;
   background: radial-gradient(120% 80% at 30% 0%, var(--np-tint), transparent 70%), linear-gradient(180deg, var(--np-tint) 0%, var(--bg) 78%);
-  opacity: 0.9;
-  transition: background 0.6s;
+  opacity: calc(0.9 * var(--np-strength, 1));
+  transition: background 0.6s, opacity 0.2s;
   pointer-events: none;
+}
+
+/* 위에서 내려오는 색: 무지개(천천히 흐름) · 끄기 */
+#np[data-bg='rainbow'] .np-bg {
+  background: linear-gradient(180deg, transparent 0%, var(--bg) 80%),
+    linear-gradient(
+      100deg,
+      hsl(0 var(--rb-s) var(--rb-l)),
+      hsl(45 var(--rb-s) var(--rb-l)),
+      hsl(100 var(--rb-s) var(--rb-l)),
+      hsl(170 var(--rb-s) var(--rb-l)),
+      hsl(220 var(--rb-s) var(--rb-l)),
+      hsl(275 var(--rb-s) var(--rb-l)),
+      hsl(330 var(--rb-s) var(--rb-l))
+    );
+  animation: np-hue 28s linear infinite;
+}
+
+#np[data-bg='off'] .np-bg {
+  display: none;
+}
+
+@keyframes np-hue {
+  to {
+    filter: hue-rotate(360deg);
+  }
 }
 
 .np-top {
@@ -1152,12 +1208,87 @@ input[type='range']:hover::-webkit-slider-thumb {
   min-height: 0;
 }
 
-.np-art {
+/* 커버 자리. 원형 스펙트럼일 때는 커버가 가운데서 LP처럼 돌고, 둘레로 막대가 퍼진다 */
+.np-stage {
+  position: relative;
   width: min(100%, 46vh);
   aspect-ratio: 1;
   margin: 0 auto 26px;
+  transition: width 0.3s var(--ease);
+}
+
+.np-art {
+  position: absolute;
+  inset: 0;
   border-radius: 28px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  transition: inset 0.35s var(--ease), border-radius 0.35s var(--ease);
+}
+
+.viz {
+  display: none;
+  pointer-events: none;
+}
+
+.viz-strip {
+  width: min(100%, calc(46vh - 64px));
+  height: 56px;
+  margin: 0 auto 12px;
+}
+
+#np.show-strip .np-stage {
+  width: min(100%, calc(46vh - 64px));
+  margin-bottom: 12px;
+}
+
+#np.show-strip .viz-strip,
+#np.show-ring .viz-ring,
+#np.show-bottom .viz-bottom {
+  display: block;
+}
+
+/* 화면 아래 전체: 맨 아래에 화면 폭 그대로 깔고, 그만큼 내용을 위로 올려서 겹치지 않게 */
+.viz-bottom {
+  --h: clamp(72px, 13vh, 128px);
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: var(--h);
+  -webkit-mask-image: linear-gradient(to top, #000 55%, transparent);
+  mask-image: linear-gradient(to top, #000 55%, transparent);
+}
+
+#np.show-bottom .np-body {
+  padding-bottom: calc(clamp(72px, 13vh, 128px) + 6px);
+}
+
+#np.show-bottom .np-stage {
+  width: min(100%, calc(46vh - 72px));
+}
+
+.viz-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#np.show-ring .np-art {
+  inset: 14%;
+  border-radius: 50%;
+  animation: np-spin 30s linear infinite paused;
+}
+
+body.is-playing #np.show-ring .np-art {
+  animation-play-state: running;
+}
+
+@keyframes np-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .np-titlebar {
@@ -1357,6 +1488,13 @@ input[type='range']:hover::-webkit-slider-thumb {
   z-index: 2;
 }
 
+/* 좁은 창: 디자인 탭은 아래쪽 반만 덮어서 위의 색·스펙트럼이 보이게 */
+#np.side-open.design-open .np-side {
+  inset: auto 12px 12px;
+  height: min(58vh, 560px);
+  box-shadow: var(--shadow-2);
+}
+
 @media (min-width: 1000px) {
   .np-body {
     grid-template-columns: minmax(380px, 460px) minmax(360px, 520px);
@@ -1377,6 +1515,210 @@ input[type='range']:hover::-webkit-slider-thumb {
   #np .np-extra .panel-toggle {
     display: none;
   }
+}
+
+/* ───────── 디자인 꾸미기 ───────── */
+
+.design {
+  padding: 0 20px 24px;
+}
+
+.dz {
+  padding: 16px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dz-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dz-head .label {
+  flex: 1;
+  min-width: 0;
+}
+
+.dz-head b {
+  display: block;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+
+.dz-head small,
+.dz-note {
+  display: block;
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.dz-note {
+  margin: 10px 2px 0;
+}
+
+.dz-sub {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-2);
+  margin: 16px 2px 8px;
+}
+
+.dz.off .dz-body,
+.dz-range.off {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 13.5px;
+  font-weight: 650;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chip:hover {
+  color: var(--text);
+}
+
+.chip.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.chip svg.i {
+  width: 18px;
+  height: 18px;
+}
+
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex: none;
+  background: linear-gradient(135deg, var(--placeholder-a), var(--placeholder-b));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+
+.dot.rainbow {
+  background: conic-gradient(#ff4d4d, #ffcf3a, #6ee05a, #34d3ff, #5a7cff, #d65aff, #ff4d4d);
+}
+
+.dot.none {
+  background: linear-gradient(135deg, transparent 45%, currentColor 45%, currentColor 55%, transparent 55%);
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.chip.on .dot {
+  box-shadow: 0 0 0 2px var(--accent-text);
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.swatches.small {
+  margin-top: 12px;
+}
+
+.sw {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+
+.sw.on::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--text);
+}
+
+.sw.pick {
+  background: conic-gradient(#ff4d4d, #ffcf3a, #6ee05a, #34d3ff, #5a7cff, #d65aff, #ff4d4d);
+}
+
+.sw.pick.on {
+  background: var(--c);
+}
+
+.sw.pick svg.i {
+  width: 18px;
+  height: 18px;
+  color: #fff;
+  stroke-width: 2.6;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+
+.sw input[type='color'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.dz-range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.dz-range input {
+  flex: 1;
+}
+
+.dz-range output {
+  width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dz-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  font-size: 14px;
+}
+
+.dz-switch span:first-child {
+  flex: 1;
+}
+
+.dz-foot {
+  padding-top: 18px;
 }
 
 /* ───────── 세그먼트·스위치·선택 ───────── */
@@ -1848,6 +2190,11 @@ dialog::backdrop {
   *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+
+  #np[data-bg='rainbow'] .np-bg,
+  #np.show-ring .np-art {
+    animation: none;
   }
 }
 
