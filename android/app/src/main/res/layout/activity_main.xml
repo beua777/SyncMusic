@@ -123,7 +123,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:lineSpacingMultiplier="1.2"
-                    android:text="1. 삼성 뮤직 → ⋮ → 설정 → 플레이리스트 관리에서 '모든 플레이리스트 자동 백업'을 켜요.\n2. 거기서 고른 폴더를 여기서도 똑같이 골라요.\n→ 삼성 뮤직 재생목록이 바뀔 때마다 순서 그대로 PC에 들어가요.\n→ PC에서 바꾼 재생목록은 이 폴더에 .m3u로 저장돼요. 삼성 뮤직에서 '플레이리스트 가져오기'를 누르면 반영돼요."
+                    android:text="1. 삼성 뮤직 → ⋮ → 설정 → 플레이리스트 관리에서 “모든 플레이리스트 자동 백업”을 켜요.\n2. 거기서 고른 폴더를 여기서도 똑같이 골라요.\n→ 삼성 뮤직 재생목록이 바뀔 때마다 순서 그대로 PC에 들어가요.\n→ PC에서 바꾼 재생목록은 이 폴더에 .m3u로 저장돼요. 삼성 뮤직에서 “플레이리스트 가져오기”를 누르면 반영돼요."
                     android:textColor="?android:attr/textColorSecondary" />
 
                 <LinearLayout
@@ -203,7 +203,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="갤럭시는 오래 안 쓴 앱의 백그라운드 작업을 멈출 수 있어요. 자동 동기화가 늦으면 설정 → 배터리 → 백그라운드 사용 제한에서 SyncMusic을 '절전 예외'로 두세요."
+                    android:text="갤럭시는 오래 안 쓴 앱의 백그라운드 작업을 멈출 수 있어요. 자동 동기화가 늦으면 설정 → 배터리 → 백그라운드 사용 제한에서 SyncMusic을 “절전 예외”로 두세요."
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="13sp" />
             </LinearLayout>
@@ -234,7 +234,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="삼성 뮤직에서 듣던 곡, 위치, 대기열 순서, 셔플 상태를 PC로 보내요. PC 화면 아래에 '이어 듣기' 버튼이 떠요."
+                    android:text="삼성 뮤직에서 듣던 곡, 위치, 대기열 순서, 셔플 상태를 PC로 보내요. PC 화면 아래에 “이어 듣기” 버튼이 떠요."
                     android:textColor="?android:attr/textColorSecondary" />
 
                 <Button

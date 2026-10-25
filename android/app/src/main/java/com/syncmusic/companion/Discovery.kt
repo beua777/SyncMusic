@@ -42,9 +42,9 @@ object Discovery {
                         val host = p.address.hostAddress ?: continue
                         val found = Found(host, j.optInt("port", Prefs.DEFAULT_SYNC_PORT), j.optString("pcId"), j.optString("pcName", "PC"))
                         if (wantPcId == null || found.pcId == wantPcId) return found
-                    } catch (_: SocketTimeoutException) {
+                    } catch (e: SocketTimeoutException) {
                         // 다시 보내고 기다림
-                    } catch (_: JSONException) {
+                    } catch (e: JSONException) {
                         // 다른 프로그램의 패킷
                     }
                 }

@@ -71,8 +71,10 @@ export function matchItems(items, library, { baseDir } = {}) {
   for (const it of items) {
     let t = null;
     if (it.path) {
-      const p = it.path.replace(/\//g, path.sep);
-      const abs = path.isAbsolute(p) ? p : baseDir ? path.resolve(baseDir, p) : null;
+      const p = it.path.replace(/[\\/]/g, path.sep);
+      // "C:\..." 같은 Windows 경로는 어느 OS에서 읽어도 절대 경로로 본다
+      const isAbs = path.isAbsolute(p) || /^[A-Za-z]:[\\/]/.test(it.path) || it.path.startsWith('\\\\');
+      const abs = isAbs ? p : baseDir ? path.resolve(baseDir, p) : null;
       if (abs) {
         const id = library.idForPath(abs);
         if (id) t = library.get(id);
