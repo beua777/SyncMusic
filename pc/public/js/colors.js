@@ -103,6 +103,11 @@ export function customTint(hex, dark) {
   return hsl(h, Math.min(85, s), dark ? clamp(l * 0.55, 16, 38) : clamp(l, 68, 90));
 }
 
+// 무지개 단색: 한 색이 CYCLE_SECONDS 동안 무지개 순서로 한 바퀴 돈다.
+// 배경(CSS 애니메이션)과 스펙트럼(캔버스)이 같은 시계(performance.now)를 써서 같이 바뀐다
+export const CYCLE_SECONDS = 36;
+export const cycleHue = (ms) => ((ms / 1000 / CYCLE_SECONDS) * 360) % 360;
+
 // 랜덤 색상: 바로 전 색과 너무 비슷하지 않게
 export function randomHue(prev = null, rand = Math.random) {
   for (let i = 0; i < 8; i++) {
@@ -112,9 +117,10 @@ export function randomHue(prev = null, rand = Math.random) {
   return ((prev ?? 0) + 180) % 360;
 }
 
-// 스펙트럼 색: 아래(a)에서 위(b)로 번지는 두 색, 또는 무지개
+// 스펙트럼 색: 아래(a)에서 위(b)로 번지는 두 색, 무지개(여러 색), 또는 무지개 단색(시간에 따라 바뀜)
 export function spectrumPalette(mode, { album = null, hue = 200, accent = null, custom = null, dark = false } = {}) {
   if (mode === 'rainbow') return { rainbow: true, s: 85, l: dark ? 62 : 55 };
+  if (mode === 'cycle') return { cycle: true, s: 82, l: dark ? 62 : 52 };
   let base;
   if (mode === 'random') base = hslToRgb(hue, 82, dark ? 62 : 52);
   else if (mode === 'custom') base = hexToRgb(custom);

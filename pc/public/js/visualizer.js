@@ -1,5 +1,5 @@
 // 오디오 스펙트럼: <audio> → Web Audio 분석기 → 캔버스(재생 화면의 막대·대칭·물결, 커버 둘레 원형, 화면 아래 전체, 미니 플레이어)
-import { rgb } from './colors.js';
+import { cycleHue, rgb } from './colors.js';
 import { bandEdges, bandLevels, demoLevels, fallLevels, volumeGainDb } from './spectrum.js';
 
 const FFT = 4096;
@@ -14,7 +14,6 @@ export class Visualizer {
     this.connecting = null;
     this.views = [];
     this.enabled = false;
-    this.style = 'bars';
     this.palette = { rainbow: false, a: [29, 111, 230], b: [120, 170, 255] };
     this.demo = false; // 디자인 탭을 연 동안 멈춰 있으면 미리보기로 움직인다
     this.raf = 0;
@@ -37,20 +36,23 @@ export class Visualizer {
 
   // kind: strip(재생 화면, 커버 아래) · bottom(재생 화면 아래 전체) · ring(커버 둘레) · mini(미니 플레이어). visible: 지금 화면에 보이는지
   add(canvas, kind, visible) {
-    const v = { canvas, kind, visible, on: false, g: canvas.getContext('2d'), key: '', bands: null, target: null, shown: null };
+    const v = { canvas, kind, visible, on: false, shape: null, g: canvas.getContext('2d'), key: '', bands: null, target: null, shown: null };
     this.views.push(v);
     this.resize.observe(canvas);
     return v;
   }
 
-  configure({ enabled, style, place, mini, palette }) {
+  // cover: 커버 쪽 모양(bars · mirror · wave · circle · off) · bottom: 화면 아래 전체 모양(bars · mirror · wave · off)
+  configure({ enabled, cover, bottom, mini, palette }) {
     this.enabled = !!enabled;
-    this.style = style;
     if (palette) this.palette = palette;
-    const where = style === 'circle' ? 'ring' : place === 'bottom' ? 'bottom' : 'strip';
+    const line = (s) => (['bars', 'mirror', 'wave'].includes(s) ? s : null);
+    const shapes = { strip: line(cover), ring: cover === 'circle' ? 'circle' : null, bottom: line(bottom), mini: mini ? 'bars' : null };
     for (const v of this.views) {
-      v.on = this.enabled && (v.kind === 'mini' ? !!mini : v.kind === where);
-      v.key = ''; // 막대 개수가 바뀔 수 있음
+      const shape = this.enabled ? shapes[v.kind] : null;
+      if (shape !== v.shape) v.key = ''; // 막대 개수가 바뀔 수 있음
+      v.shape = shape;
+      v.on = !!shape;
     }
     if (this.enabled && this.playing) this.connect();
     this.wake(true);
@@ -146,7 +148,7 @@ export class Visualizer {
         ? 40
         : v.kind === 'mini'
           ? clamp(Math.floor(cw / 9), 24, 120)
-          : this.style === 'wave'
+          : v.shape === 'wave'
             ? clamp(Math.floor(cw / (wide ? 20 : 14)), 16, wide ? 72 : 40)
             : clamp(Math.floor(cw / (wide ? 12 : 10)), 16, wide ? 128 : 64);
     const sr = this.ac?.sampleRate || 48000;
@@ -162,15 +164,25 @@ export class Visualizer {
     return true;
   }
 
-  // 무지개는 시간이 갈수록 색이 천천히 흐른다
+  // 한 색 막대의 두 색(아래 진하게 → 위 밝게). 무지개 단색은 지금 시각의 색
+  pair(alpha = 1) {
+    const p = this.palette;
+    if (!p.cycle) return [rgb(p.a, alpha), rgb(p.b, alpha)];
+    const h = Math.round(cycleHue(performance.now()));
+    const a = alpha < 1 ? ` / ${alpha}` : '';
+    return [`hsl(${h} ${p.s}% ${p.l}%${a})`, `hsl(${(h + 12) % 360} ${p.s}% ${Math.min(p.l + 18, 92)}%${a})`];
+  }
+
+  // 무지개(여러 색)는 시간이 갈수록 색이 천천히 흐른다
   fill(g, x0, y0, x1, y1, t) {
     const p = this.palette;
     const grad = g.createLinearGradient(x0, y0, x1, y1);
     if (p.rainbow) {
       for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${Math.round(t * 24 + k * 55) % 360} ${p.s}% ${p.l}%)`);
     } else {
-      grad.addColorStop(0, rgb(p.a));
-      grad.addColorStop(1, rgb(p.b));
+      const [a, b] = this.pair();
+      grad.addColorStop(0, a);
+      grad.addColorStop(1, b);
     }
     return grad;
   }
@@ -178,10 +190,9 @@ export class Visualizer {
   draw(v, t) {
     const { g, canvas } = v;
     g.clearRect(0, 0, canvas.width, canvas.height);
-    if (v.kind === 'ring') return this.drawRing(v, t);
-    const shaped = v.kind === 'strip' || v.kind === 'bottom';
-    if (shaped && this.style === 'wave') return this.drawWave(v, t);
-    return this.drawBars(v, t, shaped && this.style === 'mirror');
+    if (v.shape === 'circle') return this.drawRing(v, t);
+    if (v.shape === 'wave') return this.drawWave(v, t);
+    return this.drawBars(v, t, v.shape === 'mirror');
   }
 
   drawBars(v, t, mirror) {
@@ -206,10 +217,11 @@ export class Visualizer {
   }
 
   mirrorFill(g, H) {
+    const [a, b] = this.pair();
     const grad = g.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0, rgb(this.palette.b));
-    grad.addColorStop(0.5, rgb(this.palette.a));
-    grad.addColorStop(1, rgb(this.palette.b, 0.55));
+    grad.addColorStop(0, b);
+    grad.addColorStop(0.5, a);
+    grad.addColorStop(1, this.pair(0.55)[1]);
     return grad;
   }
 
@@ -237,7 +249,7 @@ export class Visualizer {
     g.globalAlpha = 1;
     g.lineWidth = 2.2 * dpr;
     g.lineJoin = 'round';
-    g.strokeStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0, t) : rgb(this.palette.b);
+    g.strokeStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0, t) : this.pair()[1];
     g.stroke(curve);
   }
 
@@ -259,9 +271,10 @@ export class Visualizer {
       for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${k * 60} ${this.palette.s}% ${this.palette.l}%)`);
       g.strokeStyle = grad;
     } else {
+      const [a, b] = this.pair();
       const grad = g.createRadialGradient(c, c, r0, c, c, r0 + maxLen);
-      grad.addColorStop(0, rgb(this.palette.a));
-      grad.addColorStop(1, rgb(this.palette.b));
+      grad.addColorStop(0, a);
+      grad.addColorStop(1, b);
       g.strokeStyle = grad;
     }
     g.beginPath();

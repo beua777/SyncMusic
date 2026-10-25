@@ -4,7 +4,19 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { accentVars, contrast, customTint, hexToRgb, hslToRgb, randomHue, rgbToHex, rgbToHsl, spectrumPalette } from '../public/js/colors.js';
+import {
+  accentVars,
+  contrast,
+  customTint,
+  CYCLE_SECONDS,
+  cycleHue,
+  hexToRgb,
+  hslToRgb,
+  randomHue,
+  rgbToHex,
+  rgbToHsl,
+  spectrumPalette,
+} from '../public/js/colors.js';
 import { bandEdges, bandLevels, demoLevels, fallLevels, volumeGainDb } from '../public/js/spectrum.js';
 import { DESIGN_DEFAULTS, normalizeDesign, Settings } from '../src/settings.js';
 
@@ -95,8 +107,14 @@ test('서버는 디자인 설정을 검사하고, 모르는 값은 기본값으�
   assert.equal(d.spectrumColor, 'custom');
   assert.equal(d.spectrumCustom, DESIGN_DEFAULTS.spectrumCustom);
   assert.equal(d.spectrum, DESIGN_DEFAULTS.spectrum);
-  assert.equal(normalizeDesign({ spectrumPlace: 'bottom' }).spectrumPlace, 'bottom', '화면 아래 전체');
-  assert.equal(normalizeDesign({ spectrumPlace: 'top' }).spectrumPlace, 'cover');
+  assert.equal(normalizeDesign({ spectrumBottom: 'wave' }).spectrumBottom, 'wave', '화면 아래 전체');
+  assert.equal(normalizeDesign({ spectrumBottom: 'circle' }).spectrumBottom, 'off', '원형은 커버 쪽에만');
+  assert.equal(normalizeDesign({ spectrumStyle: 'off', npBg: 'cycle', spectrumColor: 'cycle' }).spectrumStyle, 'off');
+  assert.deepEqual(
+    ['npBg', 'spectrumColor'].map((k) => normalizeDesign({ npBg: 'cycle', spectrumColor: 'cycle' })[k]),
+    ['cycle', 'cycle'],
+    '무지개 단색',
+  );
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'syncmusic-design-'));
   try {
@@ -110,4 +128,30 @@ test('서버는 디자인 설정을 검사하고, 모르는 값은 기본값으�
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('예전 "위치" 설정은 새 자리로 옮김 (커버 쪽 · 화면 아래 전체를 따로)', () => {
+  const was = (design) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'syncmusic-design-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ design }));
+      return new Settings(dir).data.design;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const bottom = was({ spectrumStyle: 'wave', spectrumPlace: 'bottom', spectrumColor: 'rainbow' });
+  assert.deepEqual([bottom.spectrumStyle, bottom.spectrumBottom, bottom.spectrumColor], ['off', 'wave', 'rainbow']);
+  assert.equal('spectrumPlace' in bottom, false, '없어진 항목은 버림');
+  const ring = was({ spectrumStyle: 'circle', spectrumPlace: 'cover' });
+  assert.deepEqual([ring.spectrumStyle, ring.spectrumBottom], ['circle', 'off']);
+});
+
+test('무지개 단색: 한 색이 36초에 한 바퀴, 스펙트럼도 같은 시계', () => {
+  assert.equal(cycleHue(0), 0);
+  assert.equal(cycleHue(CYCLE_SECONDS * 500), 180);
+  assert.ok(Math.abs(cycleHue(CYCLE_SECONDS * 1000 + 1)) < 0.1, '한 바퀴 돌면 처음 색');
+  const p = spectrumPalette('cycle', { dark: true });
+  assert.equal(p.cycle, true);
+  assert.equal(p.rainbow, undefined, '여러 색 무지개와는 다른 모드');
 });

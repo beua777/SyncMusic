@@ -1160,6 +1160,25 @@ input[type='range']:hover::-webkit-slider-thumb {
   animation: np-hue 28s linear infinite;
 }
 
+/* 무지개 단색: 한 색이 무지개 순서로 서서히 바뀐다 (0.1초마다 1도씩이라 다시 그리는 일이 적음) */
+@property --np-cycle {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+#np[data-bg='cycle'] .np-bg {
+  --cyc: hsl(var(--np-cycle) var(--rb-s) var(--rb-l));
+  background: radial-gradient(120% 80% at 30% 0%, var(--cyc), transparent 70%), linear-gradient(180deg, var(--cyc) 0%, var(--bg) 78%);
+  animation: np-cycle 36s steps(360) infinite;
+}
+
+@keyframes np-cycle {
+  to {
+    --np-cycle: 360;
+  }
+}
+
 #np[data-bg='off'] .np-bg {
   display: none;
 }
@@ -1208,10 +1227,26 @@ input[type='range']:hover::-webkit-slider-thumb {
   min-height: 0;
 }
 
+/* 커버 크기: 창 높이의 46%까지, 아래 컨트롤과 스펙트럼 자리를 빼고 남는 만큼 */
+#np {
+  --strip-space: 0px;
+  --bottom-h: clamp(72px, 13vh, 128px);
+  --bottom-space: 0px;
+  --art: min(100%, 46vh, calc(100vh - 380px - var(--strip-space) - var(--bottom-space)));
+}
+
+#np.show-strip {
+  --strip-space: 68px;
+}
+
+#np.show-bottom {
+  --bottom-space: calc(var(--bottom-h) + 6px);
+}
+
 /* 커버 자리. 원형 스펙트럼일 때는 커버가 가운데서 LP처럼 돌고, 둘레로 막대가 퍼진다 */
 .np-stage {
   position: relative;
-  width: min(100%, 46vh);
+  width: var(--art);
   aspect-ratio: 1;
   margin: 0 auto 26px;
   transition: width 0.3s var(--ease);
@@ -1231,13 +1266,12 @@ input[type='range']:hover::-webkit-slider-thumb {
 }
 
 .viz-strip {
-  width: min(100%, calc(46vh - 64px));
+  width: var(--art);
   height: 56px;
   margin: 0 auto 12px;
 }
 
 #np.show-strip .np-stage {
-  width: min(100%, calc(46vh - 64px));
   margin-bottom: 12px;
 }
 
@@ -1249,23 +1283,18 @@ input[type='range']:hover::-webkit-slider-thumb {
 
 /* 화면 아래 전체: 맨 아래에 화면 폭 그대로 깔고, 그만큼 내용을 위로 올려서 겹치지 않게 */
 .viz-bottom {
-  --h: clamp(72px, 13vh, 128px);
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   width: 100%;
-  height: var(--h);
+  height: var(--bottom-h);
   -webkit-mask-image: linear-gradient(to top, #000 55%, transparent);
   mask-image: linear-gradient(to top, #000 55%, transparent);
 }
 
 #np.show-bottom .np-body {
-  padding-bottom: calc(clamp(72px, 13vh, 128px) + 6px);
-}
-
-#np.show-bottom .np-stage {
-  width: min(100%, calc(46vh - 72px));
+  padding-bottom: var(--bottom-space);
 }
 
 .viz-ring {
@@ -1617,6 +1646,18 @@ body.is-playing #np.show-ring .np-art {
 
 .dot.rainbow {
   background: conic-gradient(#ff4d4d, #ffcf3a, #6ee05a, #34d3ff, #5a7cff, #d65aff, #ff4d4d);
+}
+
+/* 무지개 단색: 점도 한 색으로 서서히 바뀜 */
+.dot.cycle {
+  background: #ff4d4d;
+  animation: dot-cycle 6s linear infinite;
+}
+
+@keyframes dot-cycle {
+  to {
+    filter: hue-rotate(360deg);
+  }
 }
 
 .dot.none {
@@ -2193,7 +2234,9 @@ dialog::backdrop {
   }
 
   #np[data-bg='rainbow'] .np-bg,
-  #np.show-ring .np-art {
+  #np[data-bg='cycle'] .np-bg,
+  #np.show-ring .np-art,
+  .dot.cycle {
     animation: none;
   }
 }

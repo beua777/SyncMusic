@@ -1,6 +1,6 @@
 // 디자인 꾸미기: 포인트 색 · 재생 화면 배경(위에서 내려오는 색) · 오디오 스펙트럼
 import { put } from '../api.js';
-import { accentVars, customTint, hsl, npTint, randomHue, rgbToHex, spectrumPalette } from '../colors.js';
+import { accentVars, customTint, CYCLE_SECONDS, hsl, npTint, randomHue, rgbToHex, spectrumPalette } from '../colors.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { esc } from '../util.js';
@@ -23,22 +23,21 @@ const BG_MODES = [
   ['album', '앨범 색'],
   ['random', '랜덤'],
   ['rainbow', '무지개'],
+  ['cycle', '무지개 단색'],
   ['custom', '직접 고르기'],
   ['off', '끄기'],
 ];
-const STYLES = [
+const LINE_STYLES = [
   ['bars', '막대', 'bars'],
   ['mirror', '대칭', 'vizMirror'],
   ['wave', '물결', 'vizWave'],
-  ['circle', '원형', 'vizCircle'],
 ];
-const PLACES = [
-  ['cover', '커버 아래'],
-  ['bottom', '화면 아래 전체'],
-];
+const COVER_STYLES = [...LINE_STYLES, ['circle', '원형', 'vizCircle'], ['off', '끄기']];
+const BOTTOM_STYLES = [...LINE_STYLES, ['off', '끄기']];
 const VIZ_COLORS = [
   ['album', '앨범 색'],
   ['rainbow', '무지개'],
+  ['cycle', '무지개 단색'],
   ['random', '랜덤'],
   ['accent', '포인트 색'],
   ['custom', '직접 고르기'],
@@ -88,6 +87,10 @@ export function applyDesign() {
   }
 
   const np = document.getElementById('np');
+  if (d.npBg === 'cycle' && np.dataset.bg !== 'cycle') {
+    // 배경 애니메이션을 스펙트럼과 같은 시계에 맞춘다 (둘 다 무지개 단색이면 같은 색)
+    np.querySelector('.np-bg').style.animationDelay = `${-((performance.now() / 1000) % CYCLE_SECONDS).toFixed(3)}s`;
+  }
   np.dataset.bg = d.npBg;
   const tint =
     d.npBg === 'album' ? albumRgb && npTint(albumRgb, dark) : d.npBg === 'random' ? hsl(hue, 55, dark ? 22 : 86) : d.npBg === 'custom' ? customTint(d.npBgColor, dark) : null;
@@ -95,16 +98,16 @@ export function applyDesign() {
   else np.style.removeProperty('--np-tint');
   np.style.setProperty('--np-strength', String(d.npBgStrength / 100));
 
-  const shaped = d.spectrum && d.spectrumStyle !== 'circle';
-  np.classList.toggle('show-strip', shaped && d.spectrumPlace !== 'bottom');
-  np.classList.toggle('show-bottom', shaped && d.spectrumPlace === 'bottom');
-  np.classList.toggle('show-ring', d.spectrum && d.spectrumStyle === 'circle');
+  const cover = d.spectrum ? d.spectrumStyle : 'off';
+  np.classList.toggle('show-strip', ['bars', 'mirror', 'wave'].includes(cover));
+  np.classList.toggle('show-ring', cover === 'circle');
+  np.classList.toggle('show-bottom', d.spectrum && d.spectrumBottom !== 'off');
   document.getElementById('mini').classList.toggle('viz-on', d.spectrum && d.spectrumMini);
   const accent = getComputedStyle(root).getPropertyValue('--accent').trim();
   viz?.configure({
     enabled: d.spectrum,
-    style: d.spectrumStyle,
-    place: d.spectrumPlace,
+    cover: d.spectrumStyle,
+    bottom: d.spectrumBottom,
     mini: d.spectrumMini,
     palette: spectrumPalette(d.spectrumColor, { album: albumRgb, hue, accent, custom: d.spectrumCustom, dark }),
   });
@@ -119,6 +122,7 @@ function lead(v, d, kind) {
   if (v === 'album') return dot(albumRgb ? rgbToHex(albumRgb) : '', 'album');
   if (v === 'random') return dot(hsl(hue, 75, 58), 'random');
   if (v === 'rainbow') return dot('', 'rainbow');
+  if (v === 'cycle') return dot('', 'cycle');
   if (v === 'accent') return dot('var(--accent)');
   if (v === 'custom') return dot(kind === 'viz' ? d.spectrumCustom : d.npBgColor);
   if (v === 'off') return dot('', 'none');
@@ -149,19 +153,19 @@ export function renderDesign() {
   ${d.npBg === 'custom' ? colorRow('npBgColor', d.npBgColor) : ''}
   ${d.npBg === 'random' ? '<p class="dz-note">곡이 바뀔 때마다 새 색이 나와요. 랜덤을 한 번 더 누르면 지금 바꿔요</p>' : ''}
   ${d.npBg === 'album' ? '<p class="dz-note">커버 그림의 대표 색을 써요 (삼성 뮤직처럼)</p>' : ''}
+  ${d.npBg === 'rainbow' ? '<p class="dz-note">여러 색이 함께 천천히 흘러요</p>' : ''}
+  ${d.npBg === 'cycle' ? '<p class="dz-note">한 가지 색이 무지개 순서로 서서히 바뀌어요</p>' : ''}
   <label class="dz-range${d.npBg === 'off' ? ' off' : ''}"><span>진하기</span><input type="range" min="0" max="100" step="1" data-k="npBgStrength" value="${d.npBgStrength}" style="--p:${d.npBgStrength}%"><output>${d.npBgStrength}%</output></label>
 </section>
 <section class="dz${d.spectrum ? '' : ' off'}">
   <div class="dz-head"><div class="label"><b>오디오 스펙트럼</b><small>재생 중인 소리를 주파수별로 그려요</small></div>
     <label class="switch"><input type="checkbox" data-k="spectrum" ${d.spectrum ? 'checked' : ''} aria-label="오디오 스펙트럼"><span></span></label></div>
   <div class="dz-body">
-    <div class="dz-sub">모양</div>
-    <div class="chips">${STYLES.map(([v, l, ic]) => chip('spectrumStyle', v, l, d.spectrumStyle === v, icon(ic))).join('')}</div>
-    ${
-      d.spectrumStyle === 'circle'
-        ? '<p class="dz-note">원형은 커버 둘레에 그려요. 커버가 LP처럼 돌아요</p>'
-        : `<div class="dz-sub">위치</div><div class="chips">${PLACES.map(([v, l]) => chip('spectrumPlace', v, l, d.spectrumPlace === v)).join('')}</div>`
-    }
+    <div class="dz-sub">커버 쪽</div>
+    <div class="chips">${COVER_STYLES.map(([v, l, ic]) => chip('spectrumStyle', v, l, d.spectrumStyle === v, ic ? icon(ic) : dot('', 'none'))).join('')}</div>
+    ${d.spectrumStyle === 'circle' ? '<p class="dz-note">원형은 커버 둘레에 그려요. 커버가 LP처럼 돌아요</p>' : ''}
+    <div class="dz-sub">화면 아래 전체</div>
+    <div class="chips">${BOTTOM_STYLES.map(([v, l, ic]) => chip('spectrumBottom', v, l, d.spectrumBottom === v, ic ? icon(ic) : dot('', 'none'))).join('')}</div>
     <div class="dz-sub">색</div>
     <div class="chips">${VIZ_COLORS.map(([v, l]) => chip('spectrumColor', v, l, d.spectrumColor === v, lead(v, d, 'viz'))).join('')}</div>
     ${d.spectrumColor === 'custom' ? colorRow('spectrumCustom', d.spectrumCustom) : ''}
