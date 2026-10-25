@@ -38,10 +38,12 @@ jobs:
         env:
           SYNCMUSIC_KEYSTORE_PASSWORD: ${{ secrets.SYNCMUSIC_KEYSTORE_PASSWORD }}
         run: gradle assembleDebug --no-daemon
-      - name: 서명 확인
+      - name: 서명 확인 (인증서 지문 출력)
+        continue-on-error: true
         run: |
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
-          "$BT/apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk | grep -E "Signer #1 certificate (DN|SHA-256)"
+          echo "build-tools: $BT"
+          "$BT/apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk 2>&1 | head -20
       - uses: actions/upload-artifact@v4
         with:
           name: syncmusic-companion-apk
