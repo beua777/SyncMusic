@@ -2,7 +2,7 @@
 // 테스트(test/sync.e2e.test.js)와 프로토콜 설계 확인용. 폰의 파일·삼성 뮤직 백업 폴더는 메모리에 둔다.
 import crypto from 'node:crypto';
 import dgram from 'node:dgram';
-import { parsePlaylistFile, writeM3u } from '../src/m3u.js';
+import { parsePlaylistFile, writeM3u, writeSmpl } from '../src/m3u.js';
 import { quickHashBuffer } from '../src/quickhash.js';
 import { deriveSecret, pairProof, safeEqual, sha256hex, signRequest, signResponse } from '../src/sync/crypto.js';
 
@@ -140,6 +140,8 @@ export class FakePhone {
 
   // ───── 동기화 한 번 (docs/PLAN.md 6.5) ─────
   async sync() {
+    // 삼성 뮤직이 .smpl로 백업하는 폰이면 새로 쓰는 재생목록도 .smpl로
+    const usesSmpl = [...this.playlistFiles.keys()].some((f) => /\.smpl$/i.test(f));
     const plan = await this.call('POST', '/sync/manifest', { json: this.buildManifest() });
     let uploaded = 0;
     let downloaded = 0;
@@ -161,7 +163,10 @@ export class FakePhone {
       downloaded++;
     }
     for (const p of plan.playlists) {
-      const file = p.file || `${p.key}.m3u`;
+      let file = p.file || `${p.key}.m3u`;
+      if (p.action !== 'delete' && !this.playlistFiles.has(file) && usesSmpl && !/\.smpl$/i.test(file)) {
+        file = `${file.replace(/\.[^.]+$/, '')}.smpl`;
+      }
       if (p.action === 'delete') {
         const cur = this.playlistFiles.get(file);
         if (cur && this.written.get(file) === sha256hex(Buffer.from(cur.text))) this.playlistFiles.delete(file);
@@ -177,7 +182,18 @@ export class FakePhone {
         items.push({ path, duration: f.duration, artist: f.artist, title: f.title });
         entries.push(qh);
       }
-      const text = writeM3u(items);
+      let text;
+      if (/\.smpl$/i.test(file)) {
+        let template = null;
+        try {
+          template = JSON.parse(this.playlistFiles.get(file)?.text || 'null');
+        } catch {
+          // 깨진 파일이면 기본값으로
+        }
+        text = writeSmpl(p.name || p.key, items, template);
+      } else {
+        text = writeM3u(items);
+      }
       this.playlistFiles.set(file, { text, mtime: Date.now() });
       this.written.set(file, sha256hex(Buffer.from(text)));
       written.push({ key: p.key, file, entries });
@@ -189,6 +205,15 @@ export class FakePhone {
   // 삼성 뮤직 흉내: '자동 백업'이 재생목록 파일을 다시 쓴다 (우리 형식과 다르게 CRLF, #EXTINF 없음)
   samsungWrite(file, paths, { mtime = Date.now() } = {}) {
     this.playlistFiles.set(file, { text: `#EXTM3U\r\n${paths.join('\r\n')}\r\n`, mtime });
+  }
+
+  // 삼성 뮤직 흉내 (.smpl 백업 기기): 실제 S26 파일처럼 members는 order 큰 곡부터, order는 0부터
+  samsungWriteSmpl(file, paths, { mtime = Date.now(), name = file.replace(/\.[^.]+$/, '') } = {}) {
+    const members = paths
+      .map((p, i) => ({ artist: this.files.get(p)?.artist || '<unknown>', info: p, order: i, title: this.files.get(p)?.title || p, type: 65537 }))
+      .reverse();
+    const text = JSON.stringify({ members, name, recentlyPlayedDate: 1791370269, sortBy: 4, version: 1 }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+    this.playlistFiles.set(file, { text, mtime });
   }
 
   readPlaylistPaths(file) {

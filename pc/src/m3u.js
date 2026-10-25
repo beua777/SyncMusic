@@ -64,6 +64,31 @@ export function writeM3u(items) {
   return `${lines.join('\n')}\n`;
 }
 
+// 삼성 뮤직 .smpl — 실제 갤럭시(S26)가 내보낸 파일과 같은 모양으로 쓴다:
+// 한 줄 JSON, members 배열은 order가 큰 곡부터(재생 순서는 order 오름차순), <>는 < >로.
+// 기존 파일이 있으면 recentlyPlayedDate·sortBy·version을 그대로 둔다.
+export function writeSmpl(name, items, template = null) {
+  const members = items
+    .map((it, i) => ({
+      artist: it.artist || '<unknown>',
+      info: it.path,
+      order: i + 1,
+      title: it.title || String(it.path).split(/[\\/]/).pop().replace(/\.[^.]+$/, ''),
+      type: 65537,
+    }))
+    .reverse();
+  const num = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
+  return JSON.stringify({
+    members,
+    name: String(name),
+    recentlyPlayedDate: num(template?.recentlyPlayedDate, 0),
+    sortBy: num(template?.sortBy, 4),
+    version: num(template?.version, 1),
+  })
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e');
+}
+
 // 재생목록 파일의 항목을 PC 라이브러리 곡에 맞춘다: 경로 → 파일 이름 → 제목+가수
 export function matchItems(items, library, { baseDir } = {}) {
   const ids = [];

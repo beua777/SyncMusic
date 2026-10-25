@@ -1,6 +1,8 @@
 package com.syncmusic.companion
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,6 +37,27 @@ class PlaylistFormatTest {
         assertEquals("smpl", p.format)
         assertEquals(listOf("A", "B"), p.items.map { it.title })
         assertEquals("/storage/emulated/0/Music/a.mp3", p.items[0].path)
+    }
+
+    @Test
+    fun writeSmplLooksLikeSamsungAndRoundTrips() {
+        val items = listOf(
+            PlaylistFormat.Item("/storage/emulated/0/Music/a.mp3", "A", null),
+            PlaylistFormat.Item("/storage/emulated/0/Music/b.mp3", "B", "가수"),
+        )
+        val template = JSONObject().put("recentlyPlayedDate", 1791370269L).put("sortBy", 4).put("version", 1)
+        val text = PlaylistFormat.writeSmpl("출근길", items, template)
+        assertFalse(text.contains("\n"))
+        assertFalse(text.contains("\\/"))
+        assertTrue(text.contains("\\u003cunknown\\u003e"))
+        val j = JSONObject(text)
+        val members = j.getJSONArray("members")
+        assertEquals(listOf(2, 1), List(members.length()) { members.getJSONObject(it).getInt("order") })
+        assertEquals(1791370269L, j.getLong("recentlyPlayedDate"))
+        assertEquals("출근길", j.getString("name"))
+        val back = PlaylistFormat.parse(text, "출근길.smpl")
+        assertEquals(items.map { it.path }, back.items.map { it.path })
+        assertEquals("<unknown>", back.items[0].artist)
     }
 
     @Test

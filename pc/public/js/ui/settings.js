@@ -23,8 +23,12 @@ const resultText = (r) =>
 function deviceBlock(d) {
   return `<div class="set-row">${icon('phone')}<div class="label"><b>${esc(d.name)}</b><small>마지막 동기화 ${d.lastSync ? fmtAgo(d.lastSync) : '없음'} · ${resultText(d.lastResult)}</small></div>
   <button class="icon-btn" data-act="device-more" data-id="${esc(d.id)}" aria-label="기기 메뉴">${icon('more')}</button></div>
-<div class="set-row"><div class="label"><b>폰 음악을 PC로 가져오기</b><small>폰에만 있는 곡을 PC 음악 폴더의 "From Phone"에 저장해요</small></div>
-  <label class="switch"><input type="checkbox" data-device-phone="${esc(d.id)}" ${d.options.phoneToPc ? 'checked' : ''}><span></span></label></div>
+<div class="set-row"><div class="label"><b>폰에서 PC로 가져올 곡</b><small>PC 음악 폴더의 "From Phone"에 복사해요 (폰의 파일은 그대로)</small></div>
+  <select class="select" data-device-phone="${esc(d.id)}">
+    <option value="playlists" ${d.options.phoneToPc === 'playlists' ? 'selected' : ''}>재생목록에 있는 곡만</option>
+    <option value="all" ${d.options.phoneToPc === 'all' ? 'selected' : ''}>폰의 모든 음악</option>
+    <option value="none" ${d.options.phoneToPc === 'none' ? 'selected' : ''}>가져오지 않음</option>
+  </select></div>
 <div class="set-row"><div class="label"><b>PC에서 폰으로 보낼 곡</b><small>폰의 Music/SyncMusic 폴더에 저장되고 삼성 뮤직이 바로 인식해요</small></div>
   <select class="select" data-device-pc="${esc(d.id)}">
     <option value="playlists" ${d.options.pcToPhone === 'playlists' ? 'selected' : ''}>재생목록에 있는 곡만</option>
@@ -254,7 +258,7 @@ export function bindSettingsEvents(root) {
         const r = await put('/api/system/autostart', { enabled: t.checked });
         toast(r.enabled ? '로그인할 때 백그라운드로 켜져요' : '자동 실행을 껐어요');
       } else if (t.dataset.devicePhone) {
-        await put(`/api/sync/devices/${encodeURIComponent(t.dataset.devicePhone)}`, { options: { phoneToPc: t.checked } });
+        await put(`/api/sync/devices/${encodeURIComponent(t.dataset.devicePhone)}`, { options: { phoneToPc: t.value } });
         toast('다음 동기화부터 적용돼요');
       } else if (t.dataset.devicePc) {
         await put(`/api/sync/devices/${encodeURIComponent(t.dataset.devicePc)}`, { options: { pcToPhone: t.value } });

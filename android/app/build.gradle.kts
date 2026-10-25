@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 항상 같은 키로 서명해야 새 버전을 덮어 설치할 수 있다.
+// GitHub Actions는 저장소 비밀값(SYNCMUSIC_KEYSTORE_B64)을 풀어 이 경로를 넘겨준다. 없으면 임시 디버그 키.
+val sharedKeystore = System.getenv("SYNCMUSIC_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+
 android {
     namespace = "com.syncmusic.companion"
     compileSdk = 35
@@ -11,15 +15,29 @@ android {
         applicationId = "com.syncmusic.companion"
         minSdk = 29 // MediaStore RELATIVE_PATH / IS_PENDING
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    signingConfigs {
+        if (sharedKeystore != null) {
+            create("shared") {
+                storeFile = sharedKeystore
+                storePassword = System.getenv("SYNCMUSIC_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SYNCMUSIC_KEY_ALIAS") ?: "syncmusic"
+                keyPassword = System.getenv("SYNCMUSIC_KEYSTORE_PASSWORD")
+                storeType = "pkcs12"
+            }
+        }
     }
 
     buildTypes {
+        getByName("debug") {
+            signingConfigs.findByName("shared")?.let { signingConfig = it }
+        }
         release {
             isMinifyEnabled = false
-            // 개인용으로 바로 설치할 수 있게 디버그 키로 서명 (배포할 땐 자기 키로 바꾸세요)
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("shared") ?: signingConfigs.getByName("debug")
         }
     }
 

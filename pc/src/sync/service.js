@@ -18,7 +18,18 @@ import { merge3, sameList } from './merge.js';
 const PAIR_TTL = 3 * 60_000;
 const MAX_PAIR_ATTEMPTS = 5;
 const CLOCK_SKEW = 5 * 60_000;
-export const DEFAULT_DEVICE_OPTIONS = { phoneToPc: true, pcToPhone: 'playlists' };
+const COPY_MODES = ['playlists', 'all', 'none'];
+// 기본은 양쪽 다 '재생목록에 든 곡만' 옮긴다
+export const DEFAULT_DEVICE_OPTIONS = { phoneToPc: 'playlists', pcToPhone: 'playlists' };
+
+export function deviceOptions(raw = {}) {
+  const o = { ...DEFAULT_DEVICE_OPTIONS };
+  // 0.1의 true/false: true(폰 음악 전부)는 새 기본값(재생목록 곡만)으로, false는 '가져오지 않음'으로
+  if (typeof raw.phoneToPc === 'boolean') o.phoneToPc = raw.phoneToPc ? 'playlists' : 'none';
+  else if (COPY_MODES.includes(raw.phoneToPc)) o.phoneToPc = raw.phoneToPc;
+  if (COPY_MODES.includes(raw.pcToPhone)) o.pcToPhone = raw.pcToPhone;
+  return o;
+}
 
 // 폰과의 동기화 전체를 맡는다: 페어링, 요청 인증, 동기화 계획, 파일 받기, 결과 반영, 이어듣기
 export class SyncService extends EventEmitter {
@@ -114,7 +125,7 @@ export class SyncService extends EventEmitter {
       lastSeen: Date.now(),
       lastSync: prev?.lastSync || null,
       lastResult: prev?.lastResult || null,
-      options: prev?.options || { ...DEFAULT_DEVICE_OPTIONS },
+      options: deviceOptions(prev?.options),
       links: prev?.links || {},
     };
     this.store.save();
@@ -149,9 +160,23 @@ export class SyncService extends EventEmitter {
   // ───────── 동기화 계획 ─────────
   // 폰이 보낸 곡·재생목록 목록을 보고: 받을 곡, 보낼 곡, 폰에 쓸 재생목록을 정한다.
   async planSync(dev, m) {
-    const opts = { ...DEFAULT_DEVICE_OPTIONS, ...dev.options };
+    const opts = deviceOptions(dev.options);
     const lib = this.library;
+    const notices = [];
+    const links = (dev.links ||= {});
     if (m.deviceName) dev.name = String(m.deviceName).slice(0, 60);
+
+    // 폰 → PC로 가져올 곡 (기본: 재생목록에 든 곡만). 삼성 뮤직 재생목록 + PC와 연결된 재생목록이 가리키는 곡
+    const listed = new Set();
+    if (m.playlistsEnabled) {
+      for (const pl of Array.isArray(m.playlists) ? m.playlists : []) {
+        for (const qh of Array.isArray(pl?.entries) ? pl.entries : []) if (isQh(qh)) listed.add(qh);
+      }
+    } else if (opts.phoneToPc === 'playlists') {
+      notices.push('폰 앱에서 삼성 뮤직 재생목록 폴더를 고르면, 재생목록에 든 곡을 PC로 가져와요');
+    }
+    for (const pcId of Object.keys(links)) for (const id of this.playlists.get(pcId)?.entries || []) listed.add(id);
+    const wantFromPhone = (qh) => opts.phoneToPc === 'all' || (opts.phoneToPc === 'playlists' && listed.has(qh));
 
     // 1) 폰 곡 → PC 곡 ID (같은 파일이면 같은 ID, 아니면 제목+가수로)
     const phoneTracks = new Map();
@@ -168,7 +193,7 @@ export class SyncService extends EventEmitter {
         toPc.set(qh, alias.id);
         continue;
       }
-      if (opts.phoneToPc) {
+      if (wantFromPhone(qh)) {
         upload.push(qh);
         toPc.set(qh, qh); // 올라오면 같은 ID가 된다
       }
@@ -178,11 +203,9 @@ export class SyncService extends EventEmitter {
     const mapPhone = (list) => list.filter(isQh).map((qh) => toPc.get(qh) || qh);
 
     // 2) 재생목록 병합
-    const notices = [];
     const playlistsOut = [];
     const pending = new Map();
     const results = [];
-    const links = (dev.links ||= {});
     if (m.playlistsEnabled) {
       const phoneLists = new Map();
       for (const pl of Array.isArray(m.playlists) ? m.playlists : []) {
@@ -498,7 +521,7 @@ export class SyncService extends EventEmitter {
       lastSeen: d.lastSeen,
       lastSync: d.lastSync,
       lastResult: d.lastResult,
-      options: { ...DEFAULT_DEVICE_OPTIONS, ...d.options },
+      options: deviceOptions(d.options),
       linkedPlaylists: Object.keys(d.links || {}).length,
     }));
   }
@@ -506,9 +529,7 @@ export class SyncService extends EventEmitter {
   setDeviceOptions(id, options = {}) {
     const d = this.devices[id];
     if (!d) throw new HttpError(404, '기기를 찾을 수 없어요');
-    const next = { ...DEFAULT_DEVICE_OPTIONS, ...d.options };
-    if (typeof options.phoneToPc === 'boolean') next.phoneToPc = options.phoneToPc;
-    if (['playlists', 'all', 'none'].includes(options.pcToPhone)) next.pcToPhone = options.pcToPhone;
+    const next = deviceOptions({ ...deviceOptions(d.options), ...options });
     d.options = next;
     this.store.save();
     this.emit('devices');

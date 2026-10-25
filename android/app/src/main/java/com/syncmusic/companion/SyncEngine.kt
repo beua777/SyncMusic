@@ -73,10 +73,13 @@ class SyncEngine(
         runCatching { NowPlaying.read(context, tracks)?.let { client.postJson("/sync/nowplaying", it) } }
 
         val folder = prefs.playlistTreeUri?.let { PlaylistFolder(context, it) }?.takeIf { it.usable }
+        val folderFiles = folder?.list().orEmpty()
+        // 삼성 뮤직이 .smpl로 백업하는 폰이면 우리도 .smpl로 쓴다 (가져오기가 같은 형식을 읽게)
+        val usesSmpl = folderFiles.any { it.name.endsWith(".smpl", ignoreCase = true) }
         val written = prefs.written()
         val playlists = JSONArray()
         if (folder != null) {
-            for (f in folder.list()) {
+            for (f in folderFiles) {
                 val key = f.name.substringBeforeLast('.')
                 if (written[f.name] == f.sha) {
                     // 우리가 써 둔 그대로 → 삼성 뮤직 쪽 내용은 알 수 없음 (PC가 기준점으로 판단)
@@ -166,7 +169,7 @@ class SyncEngine(
         if (folder != null) {
             for (i in 0 until pls.length()) {
                 val p = pls.getJSONObject(i)
-                val file = p.optString("file").ifBlank { p.getString("key") + ".m3u" }
+                var file = p.optString("file").ifBlank { p.getString("key") + ".m3u" }
                 if (p.optString("action") == "delete") {
                     // 우리가 쓴 파일이 그대로일 때만 지운다 (삼성 뮤직이 쓴 백업은 건드리지 않음)
                     folder.find(file)?.let { cur -> if (written[file] == cur.sha) folder.delete(file) }
@@ -188,7 +191,17 @@ class SyncEngine(
                     items += item
                     entries.put(qh)
                 }
-                val bytes = PlaylistFormat.writeM3u(items).toByteArray(Charsets.UTF_8)
+                // 새 파일이고 이 폰이 .smpl을 쓰면 확장자를 .smpl로 (실제로 쓴 이름은 commit으로 PC에 알려 준다)
+                if (usesSmpl && !file.endsWith(".smpl", ignoreCase = true) && folder.find(file) == null) {
+                    file = file.substringBeforeLast('.') + ".smpl"
+                }
+                val text = if (file.endsWith(".smpl", ignoreCase = true)) {
+                    val template = folder.find(file)?.let { cur -> runCatching { JSONObject(cur.text) }.getOrNull() }
+                    PlaylistFormat.writeSmpl(p.optString("name").ifBlank { p.getString("key") }, items, template)
+                } else {
+                    PlaylistFormat.writeM3u(items)
+                }
+                val bytes = text.toByteArray(Charsets.UTF_8)
                 if (folder.write(file, bytes)) {
                     written[file] = SyncCrypto.sha256hex(bytes)
                     writtenOut.put(JSONObject().put("key", p.getString("key")).put("file", file).put("entries", entries))

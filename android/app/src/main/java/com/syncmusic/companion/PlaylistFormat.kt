@@ -1,5 +1,6 @@
 package com.syncmusic.companion
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -54,6 +55,36 @@ object PlaylistFormat {
             append("#EXTINF:").append(dur).append(',').append(label).append('\n')
             append(it.path).append('\n')
         }
+    }
+
+    /**
+     * 삼성 뮤직 .smpl (PC의 writeSmpl과 같음). 실제 갤럭시(S26)가 내보낸 파일 모양을 따른다:
+     * 한 줄 JSON, members는 order가 큰 곡부터(재생 순서는 order 오름차순), <>는 < >, 슬래시는 그대로.
+     * template = 기존 파일 내용이 있으면 recentlyPlayedDate·sortBy·version을 그대로 둔다.
+     */
+    fun writeSmpl(name: String, items: List<Item>, template: JSONObject? = null): String {
+        val members = JSONArray()
+        for (i in items.indices.reversed()) {
+            val it = items[i]
+            members.put(
+                JSONObject()
+                    .put("artist", it.artist?.takeIf { a -> a.isNotEmpty() } ?: "<unknown>")
+                    .put("info", it.path)
+                    .put("order", i + 1)
+                    .put("title", it.title?.takeIf { t -> t.isNotEmpty() } ?: it.path.substringAfterLast('/').substringBeforeLast('.'))
+                    .put("type", 65537),
+            )
+        }
+        val root = JSONObject()
+            .put("members", members)
+            .put("name", name)
+            .put("recentlyPlayedDate", template?.optLong("recentlyPlayedDate", 0L) ?: 0L)
+            .put("sortBy", template?.optInt("sortBy", 4) ?: 4)
+            .put("version", template?.optInt("version", 1) ?: 1)
+        return root.toString()
+            .replace("\\/", "/")
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
     }
 
     private fun parseSmpl(body: String, baseName: String): Parsed {

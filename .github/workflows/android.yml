@@ -24,8 +24,24 @@ jobs:
           gradle-version: '8.9'
       - name: 단위 테스트 (PC와 같은 서명·해시 계산인지)
         run: gradle testDebugUnitTest --no-daemon
+      - name: 서명 키 준비 (저장소 비밀값이 있으면)
+        env:
+          KEYSTORE_B64: ${{ secrets.SYNCMUSIC_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/syncmusic.p12"
+            echo "SYNCMUSIC_KEYSTORE=$RUNNER_TEMP/syncmusic.p12" >> "$GITHUB_ENV"
+          else
+            echo "::warning::서명 키 비밀값이 없어서 임시 디버그 키로 서명해요. 새 버전을 설치하려면 앱을 지우고 다시 설치해야 해요."
+          fi
       - name: APK 빌드
+        env:
+          SYNCMUSIC_KEYSTORE_PASSWORD: ${{ secrets.SYNCMUSIC_KEYSTORE_PASSWORD }}
         run: gradle assembleDebug --no-daemon
+      - name: 서명 확인
+        run: |
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk | grep -E "Signer #1 certificate (DN|SHA-256)"
       - uses: actions/upload-artifact@v4
         with:
           name: syncmusic-companion-apk

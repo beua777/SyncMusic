@@ -223,6 +223,8 @@ test('폰 ↔ PC 동기화: 찾기 → 페어링 → 파일 → 재생목록 순
   });
 
   await t.test("업로드 경로에 '..'가 있어도 From Phone 폴더 밖으로 못 나감", async () => {
+    // 재생목록에 없는 곡이라 '폰의 모든 음악' 옵션에서만 올라온다
+    await ui(`/api/sync/devices/${phone.deviceId}`, 'PUT', { options: { phoneToPc: 'all' } });
     const evil = song(99, '경로 테스트', '보안');
     phone.addTrack(`${STORAGE}/../../../Windows/evil.wav`, evil, { title: '경로 테스트', artist: '보안', duration: 3 });
     await phone.sync();

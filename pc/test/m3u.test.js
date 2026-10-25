@@ -1,7 +1,7 @@
 // 삼성 뮤직 재생목록 파일 (.m3u / .m3u8 / .smpl)
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { matchItems, parsePlaylistFile, safeFileName, writeM3u } from '../src/m3u.js';
+import { matchItems, parsePlaylistFile, safeFileName, writeM3u, writeSmpl } from '../src/m3u.js';
 
 test('삼성 뮤직 .m3u: 절대 경로 + #EXTINF', () => {
   const text = '#EXTM3U\n#EXTINF:215,아이유 - 밤편지\n/storage/emulated/0/Music/아이유/밤편지.mp3\n#EXTINF:-1,\n/storage/emulated/0/Download/song.flac\n';
@@ -59,6 +59,28 @@ test('writeM3u → parsePlaylistFile 왕복 (한글·길이)', () => {
       [items[1].path, 'X', null],
     ],
   );
+});
+
+test('writeSmpl: 실제 S26 파일과 같은 모양 (한 줄, order 큰 곡부터, <> 이스케이프, 기존 값 유지)', () => {
+  const items = [
+    { path: '/storage/emulated/0/Music/a.mp3', title: 'A', artist: null },
+    { path: '/storage/emulated/0/Music/b.mp3', title: 'B', artist: '가수' },
+    { path: '/storage/emulated/0/Music/c.mp3', title: null, artist: '가수' },
+  ];
+  const text = writeSmpl('출근길', items, { recentlyPlayedDate: 1791370269, sortBy: 4, version: 1, members: [] });
+  assert.ok(!text.includes('\n'));
+  assert.ok(text.startsWith('{"members":[{"artist":"가수","info":"/storage/emulated/0/Music/c.mp3","order":3,"title":"c","type":65537}'));
+  assert.ok(text.includes('"artist":"\\u003cunknown\\u003e"'));
+  assert.ok(text.endsWith('"name":"출근길","recentlyPlayedDate":1791370269,"sortBy":4,"version":1}'));
+  const back = parsePlaylistFile(text, '출근길.smpl');
+  assert.equal(back.name, '출근길');
+  assert.deepEqual(
+    back.items.map((i) => i.path),
+    items.map((i) => i.path),
+  );
+  assert.equal(back.items[0].artist, '<unknown>');
+  const fresh = JSON.parse(writeSmpl('새 목록', items.slice(0, 1)));
+  assert.deepEqual([fresh.recentlyPlayedDate, fresh.sortBy, fresh.version], [0, 4, 1]);
 });
 
 test('파일 이름 정리', () => {
