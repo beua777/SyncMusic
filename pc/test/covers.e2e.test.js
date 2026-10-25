@@ -5,12 +5,28 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createApp } from '../src/app.js';
+import { Covers } from '../src/covers.js';
 import { coverArt, id3v24, melodyPcm, wav } from '../tools/fixtures.js';
 
 const RED = coverArt([200, 30, 30], [250, 120, 90], [255, 255, 255], 64);
 const BLUE = coverArt([20, 40, 200], [90, 160, 250], [255, 255, 255], 64);
 const GREEN = coverArt([20, 160, 60], [150, 230, 120], [255, 255, 255], 64);
 const song = (seed, title, cover) => wav(melodyPcm({ seed, seconds: 2 }), id3v24({ title, artist: '유튜버', cover }));
+
+test('같은 그림을 동시에 저장해도 실패 없이 한 파일로 (같은 커버의 앨범 곡들)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'syncmusic-covers-race-'));
+  try {
+    const covers = new Covers(dir);
+    const ids = await Promise.all([...Array.from({ length: 8 }, () => covers.save(RED, 'image/png')), covers.save(BLUE, 'image/png')]);
+    assert.equal(new Set(ids.slice(0, 8)).size, 1);
+    assert.notEqual(ids[8], ids[0]);
+    const files = fs.readdirSync(path.join(dir, 'covers')).sort();
+    assert.deepEqual(files, [`${ids[0]}.png`, `${ids[8]}.png`].sort(), '임시 파일이 남지 않음');
+    assert.deepEqual(fs.readFileSync(path.join(dir, 'covers', `${ids[0]}.png`)), RED);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('커버는 곡마다 따로, 같은 그림은 하나로, 태그에 없으면 폴더 그림', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'syncmusic-covers-'));

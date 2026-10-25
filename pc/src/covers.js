@@ -23,17 +23,24 @@ export class Covers {
     this.dir = path.join(dataDir, 'covers');
     fs.mkdirSync(this.dir, { recursive: true });
     this.folderMemo = new Map(); // 폴더 → { sig, id }
+    this.saving = new Map(); // ID → 저장 중인 Promise
   }
 
+  // 같은 그림이 동시에 들어와도(같은 커버의 앨범 곡들) 한 번만 쓴다
   async save(data, format) {
     const buf = Buffer.from(data);
     const id = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20);
     const file = path.join(this.dir, `${id}.${extFor(buf, format)}`);
-    if (!fs.existsSync(file)) {
-      const tmp = `${file}.${process.pid}.tmp`;
-      await fsp.writeFile(tmp, buf);
-      await fsp.rename(tmp, file);
+    if (fs.existsSync(file)) return id;
+    if (!this.saving.has(id)) {
+      const write = async () => {
+        const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+        await fsp.writeFile(tmp, buf);
+        await fsp.rename(tmp, file);
+      };
+      this.saving.set(id, write().finally(() => this.saving.delete(id)));
     }
+    await this.saving.get(id);
     return id;
   }
 
