@@ -1,6 +1,6 @@
 // 오디오 스펙트럼: <audio> → Web Audio 분석기 → 캔버스(재생 화면의 막대·대칭·물결, 커버 둘레 원형, 화면 아래 전체, 미니 플레이어)
-import { cycleHue, rgb } from './colors.js';
-import { bandEdges, bandLevels, demoLevels, fallLevels, volumeGainDb } from './spectrum.js';
+import { cycleHue, rainbowPhase, rgb } from './colors.js';
+import { bandEdges, bandLevels, bassLevel, demoLevels, fallLevels, volumeGainDb } from './spectrum.js';
 
 const FFT = 4096;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -14,6 +14,7 @@ export class Visualizer {
     this.connecting = null;
     this.views = [];
     this.enabled = false;
+    this.listen = false; // 스펙트럼을 꺼도 화면 효과·커버 박자 반응이 소리를 들어야 할 때
     this.palette = { rainbow: false, a: [29, 111, 230], b: [120, 170, 255] };
     this.demo = false; // 디자인 탭을 연 동안 멈춰 있으면 미리보기로 움직인다
     this.raf = 0;
@@ -43,8 +44,9 @@ export class Visualizer {
   }
 
   // cover: 커버 쪽 모양(bars · mirror · wave · circle · off) · bottom: 화면 아래 전체 모양(bars · mirror · wave · off)
-  configure({ enabled, cover, bottom, mini, palette }) {
+  configure({ enabled, cover, bottom, mini, palette, listen = false }) {
     this.enabled = !!enabled;
+    this.listen = !!listen;
     if (palette) this.palette = palette;
     const line = (s) => (['bars', 'mirror', 'wave'].includes(s) ? s : null);
     const shapes = { strip: line(cover), ring: cover === 'circle' ? 'circle' : null, bottom: line(bottom), mini: mini ? 'bars' : null };
@@ -54,7 +56,7 @@ export class Visualizer {
       v.shape = shape;
       v.on = !!shape;
     }
-    if (this.enabled && this.playing) this.connect();
+    if ((this.enabled || this.listen) && this.playing) this.connect();
     this.wake(true);
   }
 
@@ -67,7 +69,7 @@ export class Visualizer {
   // 소리가 끊기지 않게, AudioContext가 실제로 돌아갈 때만 <audio>를 분석기에 연결한다
   // (한 번 연결하면 소리가 이 경로로만 나가서, 멈춘 컨텍스트에 붙이면 무음이 된다)
   connect() {
-    if (!this.enabled || this.analyser) {
+    if (!(this.enabled || this.listen) || this.analyser) {
       if (this.ac?.state === 'suspended' && this.playing) this.ac.resume().catch(() => {});
       return this.connecting;
     }
@@ -99,6 +101,13 @@ export class Visualizer {
     return this.connecting;
   }
 
+  // 낮은음 세기 0~1 (화면 효과·커버 박자 반응용). 분석기가 없거나 멈춰 있으면 0
+  bass() {
+    if (!this.analyser || !this.playing) return 0;
+    this.analyser.getFloatFrequencyData(this.db);
+    return bassLevel(this.db, { sampleRate: this.ac.sampleRate, fftSize: FFT, gainDb: volumeGainDb(this.audio.muted ? 0 : this.audio.volume) });
+  }
+
   shouldRun() {
     return !document.hidden && this.views.some((v) => v.on && v.visible());
   }
@@ -124,7 +133,7 @@ export class Visualizer {
       else if (this.demo && !this.playing) demoLevels(v.target, t);
       else v.target.fill(0);
       if (fallLevels(v.shown, v.target, dt)) moving = true;
-      this.draw(v, t);
+      this.draw(v);
     }
     if (this.shouldRun() && (moving || live || (this.demo && !this.playing))) this.raf = requestAnimationFrame((x) => this.frame(x));
     else this.last = 0;
@@ -168,17 +177,18 @@ export class Visualizer {
   pair(alpha = 1) {
     const p = this.palette;
     if (!p.cycle) return [rgb(p.a, alpha), rgb(p.b, alpha)];
-    const h = Math.round(cycleHue(performance.now()));
+    const h = Math.round(cycleHue(performance.now(), p.period) + p.offset) % 360;
     const a = alpha < 1 ? ` / ${alpha}` : '';
     return [`hsl(${h} ${p.s}% ${p.l}%${a})`, `hsl(${(h + 12) % 360} ${p.s}% ${Math.min(p.l + 18, 92)}%${a})`];
   }
 
-  // 무지개(여러 색)는 시간이 갈수록 색이 천천히 흐른다
-  fill(g, x0, y0, x1, y1, t) {
+  // 무지개(여러 색)는 정한 속도로 색이 흐른다 (위쪽 배경과 같은 시계, 정한 만큼 어긋나게)
+  fill(g, x0, y0, x1, y1) {
     const p = this.palette;
     const grad = g.createLinearGradient(x0, y0, x1, y1);
     if (p.rainbow) {
-      for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${Math.round(t * 24 + k * 55) % 360} ${p.s}% ${p.l}%)`);
+      const base = cycleHue(performance.now(), p.period) + p.offset;
+      for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${Math.round(base + k * 55) % 360} ${p.s}% ${p.l}%)`);
     } else {
       const [a, b] = this.pair();
       grad.addColorStop(0, a);
@@ -187,15 +197,15 @@ export class Visualizer {
     return grad;
   }
 
-  draw(v, t) {
+  draw(v) {
     const { g, canvas } = v;
     g.clearRect(0, 0, canvas.width, canvas.height);
-    if (v.shape === 'circle') return this.drawRing(v, t);
-    if (v.shape === 'wave') return this.drawWave(v, t);
-    return this.drawBars(v, t, v.shape === 'mirror');
+    if (v.shape === 'circle') return this.drawRing(v);
+    if (v.shape === 'wave') return this.drawWave(v);
+    return this.drawBars(v, v.shape === 'mirror');
   }
 
-  drawBars(v, t, mirror) {
+  drawBars(v, mirror) {
     const { g, shown } = v;
     const { width: W, height: H } = v.canvas;
     const n = shown.length;
@@ -204,7 +214,7 @@ export class Visualizer {
     const r = bw / 2;
     const minH = v.kind === 'mini' ? 0 : bw; // 재생 화면은 조용할 때 점이 한 줄 남고, 미니 플레이어는 깨끗하게
     // 무지개: 왼쪽→오른쪽으로 색이 바뀜 · 한 색: 아래(진하게)→위(밝게)
-    g.fillStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0, t) : mirror ? this.mirrorFill(g, H) : this.fill(g, 0, H, 0, 0, t);
+    g.fillStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0) : mirror ? this.mirrorFill(g, H) : this.fill(g, 0, H, 0, 0);
     g.beginPath();
     for (let i = 0; i < n; i++) {
       const x = i * slot + (slot - bw) / 2;
@@ -225,7 +235,7 @@ export class Visualizer {
     return grad;
   }
 
-  drawWave(v, t) {
+  drawWave(v) {
     const { g, shown } = v;
     const { width: W, height: H } = v.canvas;
     const n = shown.length;
@@ -244,17 +254,17 @@ export class Visualizer {
     area.lineTo(0, H);
     area.closePath();
     g.globalAlpha = 0.4;
-    g.fillStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0, t) : this.fill(g, 0, H, 0, 0, t);
+    g.fillStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0) : this.fill(g, 0, H, 0, 0);
     g.fill(area);
     g.globalAlpha = 1;
     g.lineWidth = 2.2 * dpr;
     g.lineJoin = 'round';
-    g.strokeStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0, t) : this.pair()[1];
+    g.strokeStyle = this.palette.rainbow ? this.fill(g, 0, 0, W, 0) : this.pair()[1];
     g.stroke(curve);
   }
 
   // 커버(가운데 72%) 둘레로 퍼지는 막대. 왼쪽·오른쪽이 같은 모양(위가 낮은음)
-  drawRing(v, t) {
+  drawRing(v) {
     const { g, shown } = v;
     const W = v.canvas.width;
     const c = W / 2;
@@ -267,8 +277,9 @@ export class Visualizer {
     g.lineWidth = Math.max(1.5 * dpr, step * r0 * 0.5);
     g.lineCap = 'round';
     if (this.palette.rainbow) {
-      const grad = g.createConicGradient(-Math.PI / 2 + t * 0.4, c, c);
-      for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${k * 60} ${this.palette.s}% ${this.palette.l}%)`);
+      const p = this.palette;
+      const grad = g.createConicGradient(-Math.PI / 2 + rainbowPhase(performance.now(), p.period) * Math.PI * 2, c, c);
+      for (let k = 0; k <= 6; k++) grad.addColorStop(k / 6, `hsl(${(k * 60 + p.offset) % 360} ${p.s}% ${p.l}%)`);
       g.strokeStyle = grad;
     } else {
       const [a, b] = this.pair();

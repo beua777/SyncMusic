@@ -43,6 +43,35 @@ export function fallLevels(shown, target, dt, fall = 1.6) {
   return any;
 }
 
+// 낮은음(쿵쿵 하는 박자 쪽, 40~160Hz) 세기 0~1. 화면 효과와 커버 박자 반응에 쓴다
+export function bassLevel(db, { sampleRate = 48000, fftSize = 4096, gainDb = 0, loHz = 40, hiHz = 160 } = {}) {
+  const hzPerBin = sampleRate / fftSize;
+  let power = 0;
+  let n = 0;
+  for (let k = Math.max(1, Math.floor(loHz / hzPerBin)); k <= Math.ceil(hiHz / hzPerBin); k++) {
+    if (Number.isFinite(db[k])) power += 10 ** ((db[k] + gainDb) / 10);
+    n++;
+  }
+  if (!power) return 0;
+  const avgDb = 10 * Math.log10(power / n);
+  return Math.max(0, Math.min(1, (avgDb + 70) / 45));
+}
+
+// 박자 따라가기: 평소(최근 평균)보다 갑자기 커질 때 크게 튀고, 천천히 가라앉는다
+export class BeatFollower {
+  constructor() {
+    this.avg = 0;
+    this.value = 0;
+  }
+
+  step(level, dt) {
+    this.avg += (level - this.avg) * Math.min(1, dt * 1.5);
+    const target = Math.min(1, level * 0.35 + Math.max(0, level - this.avg) * 2.5);
+    this.value = target > this.value ? target : Math.max(target, this.value - dt * 2.2);
+    return this.value;
+  }
+}
+
 // 재생 전 미리보기용 가짜 스펙트럼 (디자인 설정에서 모양·색을 바로 볼 수 있게)
 export function demoLevels(out, t) {
   const n = out.length;

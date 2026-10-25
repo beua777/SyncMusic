@@ -8,16 +8,18 @@ import {
   accentVars,
   contrast,
   customTint,
-  CYCLE_SECONDS,
   cycleHue,
   hexToRgb,
   hslToRgb,
+  LINK_OFFSET,
+  rainbowPeriod,
   randomHue,
   rgbToHex,
   rgbToHsl,
   spectrumPalette,
 } from '../public/js/colors.js';
-import { bandEdges, bandLevels, demoLevels, fallLevels, volumeGainDb } from '../public/js/spectrum.js';
+import { effectCount } from '../public/js/effects.js';
+import { bandEdges, bandLevels, bassLevel, BeatFollower, demoLevels, fallLevels, volumeGainDb } from '../public/js/spectrum.js';
 import { DESIGN_DEFAULTS, normalizeDesign, Settings } from '../src/settings.js';
 
 test('색 변환은 서로 되돌릴 수 있음', () => {
@@ -147,11 +149,71 @@ test('예전 "위치" 설정은 새 자리로 옮김 (커버 쪽 · 화면 아�
   assert.deepEqual([ring.spectrumStyle, ring.spectrumBottom], ['circle', 'off']);
 });
 
-test('무지개 단색: 한 색이 36초에 한 바퀴, 스펙트럼도 같은 시계', () => {
+test('무지개 속도: 보통(5)은 한 바퀴 24초, 빠를수록 짧게', () => {
+  assert.equal(rainbowPeriod(5), 24);
+  assert.equal(rainbowPeriod(1), 96);
+  assert.ok(Math.abs(rainbowPeriod(10) - 24 / 2 ** 2.5) < 1e-9);
+  for (let s = 1; s < 10; s++) assert.ok(rainbowPeriod(s) > rainbowPeriod(s + 1));
+  assert.equal(rainbowPeriod(0), 96, '범위 밖은 끝값');
+  assert.equal(rainbowPeriod('이상한 값'), 24);
+});
+
+test('무지개 단색: 정한 속도로 한 바퀴, 스펙트럼은 위쪽 배경과 정한 만큼 어긋남', () => {
   assert.equal(cycleHue(0), 0);
-  assert.equal(cycleHue(CYCLE_SECONDS * 500), 180);
-  assert.ok(Math.abs(cycleHue(CYCLE_SECONDS * 1000 + 1)) < 0.1, '한 바퀴 돌면 처음 색');
-  const p = spectrumPalette('cycle', { dark: true });
-  assert.equal(p.cycle, true);
-  assert.equal(p.rainbow, undefined, '여러 색 무지개와는 다른 모드');
+  assert.equal(cycleHue(12_000, 24), 180);
+  assert.equal(cycleHue(3000, 6), 180, '빠르게');
+  assert.ok(cycleHue(24_000 + 1, 24) < 0.1, '한 바퀴 돌면 처음 색');
+  const p = spectrumPalette('cycle', { dark: true, period: 10, offset: LINK_OFFSET.opposite });
+  assert.deepEqual([p.cycle, p.rainbow, p.period, p.offset], [true, undefined, 10, 180]);
+  assert.deepEqual(LINK_OFFSET, { same: 0, shift: 90, opposite: 180 });
+  assert.equal(spectrumPalette('rainbow', { offset: 90 }).offset, 90, '여러 색 무지개도 어긋나게');
+});
+
+test('새 디자인 항목: 무지개 속도·색 차이, 화면 효과, 커버 흐리게, 박자 반응', () => {
+  const d = normalizeDesign({
+    npBg: 'blur',
+    rainbowSpeed: '8',
+    rainbowLink: 'opposite',
+    effect: 'sakura',
+    effectAmount: 250,
+    effectScope: 'all',
+    effectColor: 'rainbow',
+    effectReact: false,
+    coverBeat: 'both',
+  });
+  assert.deepEqual(
+    [d.npBg, d.rainbowSpeed, d.rainbowLink, d.effect, d.effectAmount, d.effectScope, d.effectColor, d.effectReact, d.coverBeat],
+    ['blur', 8, 'opposite', 'sakura', 100, 'all', 'rainbow', false, 'both'],
+  );
+  const bad = normalizeDesign({ rainbowSpeed: 0, rainbowLink: 'x', effect: 'fire', effectAmount: -5, effectScope: 'x', effectColor: 'x', effectReact: 'yes', coverBeat: 'x' });
+  assert.deepEqual(
+    [bad.rainbowSpeed, bad.rainbowLink, bad.effect, bad.effectAmount, bad.effectScope, bad.effectColor, bad.effectReact, bad.coverBeat],
+    [1, 'same', 'off', 1, 'np', 'natural', true, 'off'],
+  );
+});
+
+test('박자: 낮은음 세기는 음량과 상관없고, 갑자기 커질 때 크게 튐', () => {
+  const loud = new Float32Array(2048).fill(-30);
+  const quiet = loud.map((v) => v - 20); // 음량 10%
+  assert.ok(bassLevel(loud) > 0.8);
+  assert.ok(Math.abs(bassLevel(quiet, { gainDb: volumeGainDb(0.1) }) - bassLevel(loud)) < 1e-6);
+  assert.equal(bassLevel(new Float32Array(2048).fill(-Infinity)), 0, '소리 없음');
+
+  const b = new BeatFollower();
+  let steady = 0;
+  for (let i = 0; i < 300; i++) steady = b.step(0.5, 1 / 60);
+  assert.ok(Math.abs(steady - 0.175) < 0.02, `같은 세기면 잔잔하게: ${steady}`);
+  const kick = b.step(1, 1 / 60);
+  assert.ok(kick > steady + 0.5, `쿵! ${kick}`);
+  let after = kick;
+  for (let i = 0; i < 30; i++) after = b.step(0.5, 1 / 60);
+  assert.ok(after < kick - 0.4, '천천히 가라앉음');
+});
+
+test('화면 효과 개수: 창 크기·양에 맞춰, 끄면 0', () => {
+  assert.equal(effectCount('snow', 1920, 1080, 50), 150);
+  assert.equal(effectCount('snow', 1920, 1080, 100), 300, '양 2배');
+  assert.ok(effectCount('snow', 960, 540, 50) < 150, '작은 창은 적게');
+  assert.equal(effectCount('off', 1920, 1080, 50), 0);
+  assert.equal(effectCount('hearts', 100, 100, 1), 1, '아무리 적어도 하나는');
 });

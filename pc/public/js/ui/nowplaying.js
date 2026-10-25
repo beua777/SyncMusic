@@ -3,13 +3,15 @@ import { coverUrl, get, post } from '../api.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { $, $$, dominantColor, esc, fmtClock, fmtTime } from '../util.js';
+import { Effects } from '../effects.js';
 import { Visualizer } from '../visualizer.js';
 import { addToPlaylistDialog, coverImg, EQ, markPlaying, toggleFavorite, trackMenu } from './common.js';
-import { applyDesign, designTrackChanged, initDesign, renderDesign, setAlbumColor } from './design.js';
+import { applyDesign, designTrackChanged, initDesign, renderDesign, setAlbumColor, setCoverImage } from './design.js';
 import { dialog, openMenu, sortable, toast } from './dom.js';
 
 let player;
 let viz;
+let fx;
 let panel = readPref('np.panel', 'queue');
 let seeking = false;
 let lyrics = { id: null, synced: null, idx: -1 };
@@ -51,7 +53,8 @@ export function initNowPlaying(p) {
   </div>
 </div>`;
 
-  $('#np').innerHTML = `<div class="np-bg"></div>
+  $('#np').innerHTML = `<div class="np-blur"></div>
+<div class="np-bg"></div>
 <canvas class="viz viz-bottom" id="viz-bottom" aria-hidden="true"></canvas>
 <div class="np-top">
   <button class="icon-btn" data-act="close-np" aria-label="닫기" title="닫기 (Esc)">${icon('down')}</button>
@@ -60,7 +63,7 @@ export function initNowPlaying(p) {
 </div>
 <div class="np-body">
   <div class="np-main">
-    <div class="np-stage"><canvas class="viz viz-ring" id="viz-ring" aria-hidden="true"></canvas><div class="cover np-art" id="np-art"></div></div>
+    <div class="np-stage"><div class="np-glow"></div><canvas class="viz viz-ring" id="viz-ring" aria-hidden="true"></canvas><div class="cover np-art" id="np-art"></div></div>
     <canvas class="viz viz-strip" id="viz-strip" aria-hidden="true"></canvas>
     <div class="np-titlebar">
       <div class="np-titles"><h2 id="np-title"></h2><a id="np-artist" href="#"></a></div>
@@ -174,7 +177,9 @@ export function initNowPlaying(p) {
   viz.add($('#viz-ring'), 'ring', isNpOpen);
   viz.add($('#viz-bottom'), 'bottom', isNpOpen);
   viz.add($('#viz-mini'), 'mini', () => !isNpOpen());
-  initDesign(viz, $('#np-design'));
+  fx = new Effects($('#fx'), viz, isNpOpen);
+  fx.setCover($('#np-art'), $('#np .np-glow'));
+  initDesign(viz, $('#np-design'), fx);
 
   showPanel(panel, false);
   onTrack();
@@ -198,6 +203,7 @@ export function openNp(withPanel) {
   if (withPanel) showPanel(withPanel, true);
   else refreshPanel(true);
   viz.wake(true);
+  fx.wake();
 }
 
 export function closeNp(fromPopstate = false) {
@@ -208,6 +214,7 @@ export function closeNp(fromPopstate = false) {
   if (!fromPopstate && history.state?.np) history.back();
   viz.setDemo(false);
   viz.wake(true);
+  fx.wake();
 }
 
 function showPanel(name, open = false) {
@@ -358,6 +365,7 @@ function updateSideSub() {
 async function tint(coverId) {
   if (coverId === tintFor) return;
   tintFor = coverId;
+  setCoverImage(coverId ? coverUrl(coverId) : null);
   const rgb = coverId ? await dominantColor(coverUrl(coverId)) : null;
   if (tintFor !== coverId) return; // 그사이 곡이 또 바뀜
   setAlbumColor(rgb);

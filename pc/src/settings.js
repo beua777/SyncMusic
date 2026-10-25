@@ -6,7 +6,7 @@ import { JsonStore } from './util/jsonfile.js';
 // 디자인 꾸미기 (설정 → 디자인 꾸미기, 재생 화면의 디자인 탭)
 export const DESIGN_DEFAULTS = Object.freeze({
   accent: '', // 포인트 색: '' = 기본 파랑, '#rrggbb' = 직접 고른 색
-  npBg: 'album', // 재생 화면 위에서 내려오는 색: album · random · rainbow(여러 색) · cycle(무지개 단색) · custom · off
+  npBg: 'album', // 재생 화면 위에서 내려오는 색: album · blur(커버 흐리게) · random · rainbow(여러 색) · cycle(무지개 단색) · custom · off
   npBgColor: '#7c5cff',
   npBgStrength: 100, // 0~100
   spectrum: true, // 오디오 스펙트럼
@@ -15,16 +15,30 @@ export const DESIGN_DEFAULTS = Object.freeze({
   spectrumColor: 'album', // album · rainbow(여러 색) · cycle(무지개 단색) · random · accent · custom
   spectrumCustom: '#3fa9ff',
   spectrumMini: true, // 미니 플레이어에도
+  rainbowSpeed: 5, // 무지개가 바뀌는 속도 1(느리게) ~ 10(빠르게)
+  rainbowLink: 'same', // 위쪽 배경과 스펙트럼의 무지개 색: same(같은 색) · shift(조금 다르게) · opposite(반대 색)
+  effect: 'off', // 화면 효과: off · snow · sakura · leaves · rain · stars · fireflies · bubbles · hearts
+  effectAmount: 50, // 1~100
+  effectScope: 'np', // np(재생 화면에서만) · all(앱 전체)
+  effectColor: 'natural', // natural(효과마다 기본 색) · rainbow · accent
+  effectReact: true, // 음악 박자에 맞춰 빨라지고 밝아짐
+  coverBeat: 'off', // 박자에 맞춰 커버가: off · pulse(커짐) · glow(뒤에서 빛남) · both
 });
 
 const HEX = /^#[0-9a-f]{6}$/i;
 const SHAPES = ['bars', 'mirror', 'wave'];
 const ENUMS = {
-  npBg: ['album', 'random', 'rainbow', 'cycle', 'custom', 'off'],
+  npBg: ['album', 'blur', 'random', 'rainbow', 'cycle', 'custom', 'off'],
   spectrumStyle: [...SHAPES, 'circle', 'off'],
   spectrumBottom: [...SHAPES, 'off'],
   spectrumColor: ['album', 'rainbow', 'cycle', 'random', 'accent', 'custom'],
+  rainbowLink: ['same', 'shift', 'opposite'],
+  effect: ['off', 'snow', 'sakura', 'leaves', 'rain', 'stars', 'fireflies', 'bubbles', 'hearts'],
+  effectScope: ['np', 'all'],
+  effectColor: ['natural', 'rainbow', 'accent'],
+  coverBeat: ['off', 'pulse', 'glow', 'both'],
 };
+const RANGES = { npBgStrength: [0, 100], rainbowSpeed: [1, 10], effectAmount: [1, 100] };
 
 // 들어온 값 중 올바른 것만 base 위에 덮는다 (모르는 항목은 버림)
 export function normalizeDesign(raw, base = DESIGN_DEFAULTS) {
@@ -39,10 +53,10 @@ export function normalizeDesign(raw, base = DESIGN_DEFAULTS) {
   if (r.accent === '' || HEX.test(r.accent)) o.accent = r.accent.toLowerCase();
   for (const k of ['npBgColor', 'spectrumCustom']) if (HEX.test(r[k])) o[k] = r[k].toLowerCase();
   for (const [k, list] of Object.entries(ENUMS)) if (list.includes(r[k])) o[k] = r[k];
-  if (Number.isFinite(Number(r.npBgStrength)) && r.npBgStrength !== null && r.npBgStrength !== '') {
-    o.npBgStrength = Math.round(Math.max(0, Math.min(100, Number(r.npBgStrength))));
+  for (const [k, [lo, hi]] of Object.entries(RANGES)) {
+    if (Number.isFinite(Number(r[k])) && r[k] !== null && r[k] !== '') o[k] = Math.round(Math.max(lo, Math.min(hi, Number(r[k]))));
   }
-  for (const k of ['spectrum', 'spectrumMini']) if (typeof r[k] === 'boolean') o[k] = r[k];
+  for (const k of ['spectrum', 'spectrumMini', 'effectReact']) if (typeof r[k] === 'boolean') o[k] = r[k];
   return o;
 }
 

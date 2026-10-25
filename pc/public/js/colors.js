@@ -103,10 +103,19 @@ export function customTint(hex, dark) {
   return hsl(h, Math.min(85, s), dark ? clamp(l * 0.55, 16, 38) : clamp(l, 68, 90));
 }
 
-// 무지개 단색: 한 색이 CYCLE_SECONDS 동안 무지개 순서로 한 바퀴 돈다.
-// 배경(CSS 애니메이션)과 스펙트럼(캔버스)이 같은 시계(performance.now)를 써서 같이 바뀐다
-export const CYCLE_SECONDS = 36;
-export const cycleHue = (ms) => ((ms / 1000 / CYCLE_SECONDS) * 360) % 360;
+// 무지개 속도 1(느리게) ~ 10(빠르게) → 무지개가 한 바퀴 도는 데 걸리는 초 (5 = 24초, 한 칸마다 약 1.4배)
+export function rainbowPeriod(speed = 5) {
+  const s = Number.isFinite(Number(speed)) && speed !== null && speed !== '' ? Number(speed) : 5;
+  return 24 * 2 ** ((5 - clamp(Math.round(s), 1, 10)) / 2);
+}
+
+// 무지개가 지금 한 바퀴 중 어디인지 0~1. 배경(CSS 애니메이션)과 스펙트럼·효과(캔버스)가
+// 같은 시계(performance.now)를 써서, 같은 색으로 맞추거나 일정하게 어긋나게 할 수 있다
+export const rainbowPhase = (ms, period = rainbowPeriod()) => (ms / 1000 / period) % 1;
+export const cycleHue = (ms, period = rainbowPeriod()) => rainbowPhase(ms, period) * 360;
+
+// 위쪽 배경과 스펙트럼의 무지개 색: 같은 색 · 조금 다르게 · 반대 색 (스펙트럼 쪽을 이만큼 돌림)
+export const LINK_OFFSET = { same: 0, shift: 90, opposite: 180 };
 
 // 랜덤 색상: 바로 전 색과 너무 비슷하지 않게
 export function randomHue(prev = null, rand = Math.random) {
@@ -117,10 +126,11 @@ export function randomHue(prev = null, rand = Math.random) {
   return ((prev ?? 0) + 180) % 360;
 }
 
-// 스펙트럼 색: 아래(a)에서 위(b)로 번지는 두 색, 무지개(여러 색), 또는 무지개 단색(시간에 따라 바뀜)
-export function spectrumPalette(mode, { album = null, hue = 200, accent = null, custom = null, dark = false } = {}) {
-  if (mode === 'rainbow') return { rainbow: true, s: 85, l: dark ? 62 : 55 };
-  if (mode === 'cycle') return { cycle: true, s: 82, l: dark ? 62 : 52 };
+// 스펙트럼 색: 아래(a)에서 위(b)로 번지는 두 색, 무지개(여러 색), 또는 무지개 단색(시간에 따라 바뀜).
+// period·offset은 무지개 속도와 위쪽 배경과의 색 차이
+export function spectrumPalette(mode, { album = null, hue = 200, accent = null, custom = null, dark = false, period = rainbowPeriod(), offset = 0 } = {}) {
+  if (mode === 'rainbow') return { rainbow: true, s: 85, l: dark ? 62 : 55, period, offset };
+  if (mode === 'cycle') return { cycle: true, s: 82, l: dark ? 62 : 52, period, offset };
   let base;
   if (mode === 'random') base = hslToRgb(hue, 82, dark ? 62 : 52);
   else if (mode === 'custom') base = hexToRgb(custom);
