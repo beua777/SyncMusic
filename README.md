@@ -59,18 +59,17 @@ Windows 미디어 키와 볼륨 팝업의 재생 컨트롤도 동작해요.
 
 ## 2. 폰 동반 앱 설치
 
-이 PC에는 안드로이드 빌드 도구(JDK, Android SDK)가 없어서 APK를 아직 만들지 않았어요. 둘 중 하나로 만드세요.
+APK는 비공개 저장소 [beua777/SyncMusic](https://github.com/beua777/SyncMusic)의 GitHub Actions(**Android 동반 앱** 워크플로)가 만들어요. 코드를 올릴 때마다 Kotlin 단위 테스트를 돌리고 APK를 빌드해요.
 
-**A. GitHub Actions (설치 없이)**
-1. 이 폴더를 GitHub 저장소에 올려요 (비공개 저장소 추천).
-2. Actions → **Android 동반 앱** 워크플로가 Kotlin 단위 테스트를 돌리고 APK를 만들어요.
-3. 실행 결과의 Artifacts에서 `syncmusic-companion-apk`를 받아 폰에 설치해요.
+- 받는 곳: 저장소 → Actions → 가장 최근 **Android 동반 앱** 실행 → Artifacts의 `syncmusic-companion-apk`
+- 이 PC에는 내려받아 둔 파일이 `dist\SyncMusic-companion-0.1.0.apk`에 있어요 (git에는 안 올라감)
 
-**B. Android Studio**
-1. Android Studio에서 `android` 폴더를 열어요 (Gradle 8.9, JDK 17).
-2. 폰을 USB로 연결하고 ▶ 실행. 명령줄로는 `gradle assembleDebug`.
+폰에 설치하기:
+1. APK를 폰으로 옮겨요 (USB 복사, Quick Share, 구글 드라이브 등).
+2. 내 파일 앱에서 APK를 눌러요. "출처를 알 수 없는 앱 설치"를 허용해요.
+3. Play 프로텍트가 알 수 없는 앱이라고 경고하면 "무시하고 설치"를 눌러요. 개인용이라 디버그 키로 서명돼 있어요.
 
-설치할 때 "출처를 알 수 없는 앱 설치"를 허용해야 해요.
+직접 빌드하려면 Android Studio에서 `android` 폴더를 열고 ▶ 실행하세요 (Gradle 8.9, JDK 17). 명령줄로는 `gradle assembleDebug`.
 
 ### 폰 설정 (처음 한 번)
 
@@ -105,7 +104,7 @@ Windows 미디어 키와 볼륨 팝업의 재생 컨트롤도 동작해요.
 
 - 삼성 뮤직은 다른 앱이 재생목록에 직접 쓰는 기능을 주지 않아요. 그래서 PC에서 바꾼 재생목록은 삼성 뮤직에서 **가져오기**를 눌러야 반영돼요. 바뀌면 폰에 알림이 떠요.
 - 삼성 뮤직의 셔플 알고리즘은 공개돼 있지 않아요. 공식 도움말과 화면에서 볼 수 있는 규칙(한 바퀴 동안 중복 없음, 셔플 켜도 지금 곡 유지, 반복 3단계, 이전 버튼 두 번 등)을 재현했어요.
-- 폰 앱은 코드와 단위 테스트까지 작성했지만, 아직 빌드하거나 실제 갤럭시에서 시험하지 않았어요. 아래 체크리스트로 확인이 필요해요.
+- 폰 앱은 GitHub Actions에서 빌드와 단위 테스트를 통과했지만, 실제 갤럭시에서는 아직 시험하지 않았어요. 아래 체크리스트로 확인이 필요해요.
 
 ---
 
