@@ -87,7 +87,7 @@ APK는 비공개 저장소 [beua777/SyncMusic](https://github.com/beua777/SyncMu
 
 **업데이트**: 0.2.0부터는 늘 같은 서명 키로 빌드돼서, 새 APK를 그냥 덮어 설치하면 돼요. 0.1.0은 임시 키로 서명돼 있었어요. 그래서 0.1.0에서 0.2.0으로 올릴 때만 한 번 지우고 설치한 뒤 PC와 다시 연결해야 해요.
 
-서명 키 원본은 이 PC의 `C:\Users\sansk\.syncmusic\signing`에 있고, 저장소에는 Actions 비밀값(`SYNCMUSIC_KEYSTORE_B64`, `SYNCMUSIC_KEYSTORE_PASSWORD`)으로만 들어 있어요. 지우지 마세요. 잃어버리면 다음 업데이트 때 다시 지우고 설치해야 해요.
+서명 키 원본은 이 PC의 `%USERPROFILE%\.syncmusic\signing`에 있고, 저장소에는 Actions 비밀값(`SYNCMUSIC_KEYSTORE_B64`, `SYNCMUSIC_KEYSTORE_PASSWORD`)으로만 들어 있어요. 지우지 마세요. 잃어버리면 다음 업데이트 때 다시 지우고 설치해야 해요.
 
 직접 빌드하려면 Android Studio에서 `android` 폴더를 열고 ▶ 실행하세요 (Gradle 8.9, JDK 17). 명령줄로는 `gradle assembleDebug`. 같은 키로 서명하려면 `SYNCMUSIC_KEYSTORE`(키 파일 경로)와 `SYNCMUSIC_KEYSTORE_PASSWORD` 환경 변수를 주면 돼요.
 
