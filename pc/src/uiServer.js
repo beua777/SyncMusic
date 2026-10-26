@@ -8,7 +8,7 @@ import { APP_NAME, APP_VERSION, AUDIO_TYPES } from './config.js';
 import { COVER_ID } from './covers.js';
 import { backupSummary, makeBackup, restoreBackup } from './backup.js';
 import { makeEvent, toCsv } from './history.js';
-import { searchLrclib, saveLrc } from './lyrics.js';
+import { findLyrics, saveLrc, TranslateBlocked } from './lyrics.js';
 import { matchItems, parsePlaylistFile, safeFileName, writeM3u } from './m3u.js';
 import { forgotten, goalProgress, recentlyAdded, recommend, report, tasteShift, wrapped } from './stats.js';
 import { lrcPathFor, readAllTags, readLyrics } from './tags.js';
@@ -312,9 +312,11 @@ export function createUiServer(app) {
   route('GET', `/api/tracks/${ID}/lyrics/online`, async (req, res, m, url) => {
     if (settings.data.lyrics?.online === false) throw new HttpError(403, '설정에서 온라인 가사 찾기가 꺼져 있어요');
     const t = trackOr404(m[1]);
-    const query = url.searchParams.get('q') || '';
+    const p = (k) => (url.searchParams.get(k) || '').trim().slice(0, 200);
+    // 한국어 제목만 있는 곡은 원제를 찾으려고 제목을 일본어로 번역해 본다 (가사 자동 번역과 같은 구글 번역, 그 설정을 따름)
+    const translate = settings.data.lyrics?.translate === false ? null : (lines) => translator.translate(lines, 'ja');
     try {
-      ok(res, { results: await searchLrclib({ title: t.title, artist: t.artist, album: t.album, duration: t.duration, query }) });
+      ok(res, await findLyrics({ title: t.title, artist: t.artist, duration: t.duration, query: p('q'), qTitle: p('title'), qArtist: p('artist'), translate }));
     } catch (e) {
       errors.add({ source: 'lyrics', message: `온라인 가사 찾기 실패: ${e.message}`, context: { title: t.title } });
       throw new HttpError(502, '가사 서버(LRCLIB)에 연결하지 못했어요');
@@ -328,7 +330,7 @@ export function createUiServer(app) {
       ok(res, await translator.translate(lines.map((x) => String(x ?? '').slice(0, 500))));
     } catch (e) {
       errors.add({ source: 'lyrics', message: `가사 번역 실패: ${e.message}` });
-      throw new HttpError(502, '번역 서버에 연결하지 못했어요');
+      throw new HttpError(502, e instanceof TranslateBlocked ? e.message : '번역 서버에 연결하지 못했어요');
     }
   });
   route('GET', '/api/search/lyrics', async (req, res, m, url) => ok(res, { results: await lyricsIndex.search(url.searchParams.get('q') || '') }));

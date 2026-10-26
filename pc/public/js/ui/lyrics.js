@@ -188,55 +188,120 @@ function toolbar(b) {
 }
 
 // ───── 온라인에서 가사 찾기 (LRCLIB) ─────
-async function findOnline(t, query = '') {
-  let results = [];
-  let error = '';
-  try {
-    results = (await get(`/api/tracks/${t.id}/lyrics/online${query ? `?q=${encodeURIComponent(query)}` : ''}`)).results;
-  } catch (e) {
-    error = e.message;
-  }
-  const html = `<div class="ly-find">
-  <label class="search"><span>${icon('search')}</span><input type="search" value="${esc(query)}" placeholder="제목·가수로 다시 찾기"></label>
-  ${error ? `<p class="danger-text">${esc(error)}</p>` : ''}
+// 서버가 곡 제목에서 진짜 제목·가수 후보를 뽑아 여러 번 찾고, 결과마다 얼마나 맞는지 점수를 매겨 준다.
+// 창은 바로 열고(찾는 중…) 결과가 오면 채운다. 제목·가수를 고치거나 다른 후보를 눌러 같은 창에서 다시 찾는다
+const FIT = [
+  [0.8, 'good', '잘 맞음'],
+  [0.65, 'ok', '비슷함'],
+  [0, 'low', '다를 수 있음'],
+];
+
+function durText(d) {
+  if (d === null || d === undefined) return '';
+  return Math.abs(d) <= 2 ? ' · 길이 같음' : ` · 길이 ${d > 0 ? '+' : '−'}${Math.abs(d)}초`;
+}
+
+function foundHtml(results, terms, title, artist) {
+  const alts = (list, cur, k) =>
+    list
+      .filter((x) => x !== cur)
+      .slice(0, 5)
+      .map((x) => `<button class="chip" data-k="${k}" data-v="${esc(x)}">${esc(x)}</button>`)
+      .join('');
+  const altTitles = alts(terms.titles || [], title, 'title');
+  const altArtists = alts(terms.artists || [], artist, 'artist');
+  const row = (r, i) => {
+    const [, cls, label] = FIT.find(([min]) => r.score >= min);
+    return `<div class="row" data-i="${i}"><div class="meta"><div class="title">${esc(r.title)} ${r.synced ? '<span class="badge">시간 맞춤</span>' : ''}${r.instrumental ? '<span class="badge">연주곡</span>' : ''}</div><div class="sub">${esc(r.artist)}${r.album ? ` · ${esc(r.album)}` : ''} · ${fmtTime(r.duration)}${durText(r.durDiff)}</div></div><span class="lf-score ${cls}" title="제목·가수·길이가 얼마나 맞는지">${label} ${Math.round(r.score * 100)}%</span></div>`;
+  };
+  return `${altTitles || altArtists ? `<div class="lf-alts">${altTitles ? `<span>다른 제목</span>${altTitles}` : ''}${altArtists ? `<span>다른 가수</span>${altArtists}` : ''}</div>` : ''}
+  ${terms.translated?.length ? `<p class="dz-note">한국어 제목을 일본어로 번역해서 원제로도 찾았어요: ${esc(terms.translated.join(', '))}</p>` : ''}
+  ${terms.translateFailed ? '<p class="dz-note">구글 번역이 지금 안 돼서 한국어 제목을 원제로 바꿔 찾지는 못했어요. 위에 원제를 직접 넣어 찾을 수 있어요.</p>' : ''}
+  ${terms.korean ? '<p class="dz-note">한국어 커버는 온라인에 원곡(일본어 등) 가사만 있는 경우가 많아요. 원곡 가사를 쓰고 "번역"을 켜면 한국어 뜻을 함께 볼 수 있어요.</p>' : ''}
   <div class="dlg-list">${
     results.length
-      ? results
-          .map(
-            (r, i) => `<div class="row" data-i="${i}"><div class="meta"><div class="title">${esc(r.title)} ${r.synced ? '<span class="badge">시간 맞춤</span>' : ''}${r.instrumental ? '<span class="badge">연주곡</span>' : ''}</div><div class="sub">${esc(r.artist)} · ${esc(r.album || '')} · ${fmtTime(r.duration)}</div></div></div>`,
-          )
-          .join('')
-      : `<div class="empty compact"><p>찾은 가사가 없어요.<br>위에서 제목을 바꿔 다시 찾아보세요.</p></div>`
-  }</div>
-  <pre class="ly-preview" hidden></pre>
-</div>`;
+      ? results.map(row).join('')
+      : `<div class="empty compact"><p>찾은 가사가 없어요.<br>제목을 원래 제목(일본어·영어)으로 바꾸거나 가수를 넣어 다시 찾아보세요.</p></div>`
+  }</div>`;
+}
+
+async function findOnline(t) {
+  let results = [];
   let picked = null;
+  let open = true;
+  let seq = 0; // 다시 찾기를 여러 번 누르면 마지막 것만 그린다
   const v = await dialog({
     title: '가사 찾기 · LRCLIB',
-    html,
     cls: 'wide',
+    html: `<div class="ly-find">
+  <div class="lf-form">
+    <label class="search"><span>제목</span><input type="search" data-f="title" value="${esc(t.title)}" placeholder="노래 제목"></label>
+    <label class="search"><span>가수</span><input type="search" data-f="artist" placeholder="몰라도 돼요"></label>
+    <button class="btn primary small" data-lf="go">${icon('search')}다시 찾기</button>
+  </div>
+  <div class="lf-out"></div>
+  <pre class="ly-preview" hidden></pre>
+</div>`,
     actions: [
       { label: '닫기', value: null },
       { label: '이 가사 쓰기', value: () => (picked ? { use: picked } : null) },
     ],
-    onOpen: (d, done) => {
-      const inp = d.querySelector('input');
-      inp.onkeydown = (e) => {
-        if (e.key === 'Enter' && inp.value.trim()) done({ query: inp.value.trim() });
-      };
-      d.querySelector('.dlg-list').onclick = (e) => {
-        const r = e.target.closest('.row[data-i]');
-        if (!r) return;
-        for (const x of d.querySelectorAll('.row.on')) x.classList.remove('on');
+    onOpen: (d) => {
+      const field = (k) => d.querySelector(`input[data-f="${k}"]`);
+      const out = d.querySelector('.lf-out');
+      const pre = d.querySelector('.ly-preview');
+      const choose = (r) => {
+        for (const x of out.querySelectorAll('.row.on')) x.classList.remove('on');
         r.classList.add('on');
         picked = results[Number(r.dataset.i)];
-        const pre = d.querySelector('.ly-preview');
         pre.hidden = false;
         pre.textContent = picked.lyrics || '(연주곡)';
       };
+      const search = async (ask) => {
+        const mine = ++seq;
+        picked = null;
+        pre.hidden = true;
+        out.innerHTML = '<div class="empty compact"><p>찾는 중…</p></div>';
+        let data;
+        try {
+          data = await get(`/api/tracks/${t.id}/lyrics/online${ask ? `?${new URLSearchParams(ask)}` : ''}`);
+        } catch (e) {
+          if (open && mine === seq) out.innerHTML = `<p class="danger-text">${esc(e.message)}</p>`;
+          return;
+        }
+        if (!open || mine !== seq) return;
+        results = data.results || [];
+        const terms = data.terms || { titles: [], artists: [] };
+        if (!ask) {
+          // 처음에는 곡 제목 그대로 → 서버가 뽑은 제목·가수로 (가수가 확실하지 않으면 비워 두고 후보는 칩으로)
+          if (field('title').value === t.title) field('title').value = terms.titles[0] || t.title;
+          if (!field('artist').value) field('artist').value = (terms.sure && terms.artists[0]) || '';
+        }
+        out.innerHTML = foundHtml(results, terms, field('title').value, field('artist').value);
+        for (const c of out.querySelectorAll('.lf-alts .chip')) {
+          c.onclick = () => {
+            field(c.dataset.k).value = c.dataset.v;
+            again();
+          };
+        }
+        // 잘 맞는 게 있으면 미리 골라 둔다
+        const first = out.querySelector('.row[data-i="0"]');
+        if (first && results[0].score >= 0.8 && !results[0].instrumental) choose(first);
+      };
+      const again = () => {
+        const ask = { title: field('title').value.trim(), artist: field('artist').value.trim() };
+        if (ask.title || ask.artist) search(ask);
+      };
+      for (const k of ['title', 'artist']) field(k).onkeydown = (e) => e.key === 'Enter' && again();
+      d.querySelector('[data-lf="go"]').onclick = again;
+      out.onclick = (e) => {
+        const r = e.target.closest('.row[data-i]');
+        if (r) choose(r);
+      };
+      search(null);
     },
   });
-  if (v?.query) return findOnline(t, v.query);
+  open = false;
   if (!v?.use) return undefined;
   if (!v.use.lyrics) return toast('가사가 없는 연주곡이에요');
   try {

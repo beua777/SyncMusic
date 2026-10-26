@@ -4200,3 +4200,91 @@ body.np-covered #phone-chip {
 #np[data-fps='60'].show-ring .np-art {
   animation-timing-function: linear;
 }
+
+/* 가사 찾기: 제목·가수 따로 고치기, 다른 후보, 얼마나 맞는지 */
+.lf-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ly-find .lf-form .search {
+  flex: 1 1 180px;
+  height: 40px;
+  padding: 0 14px;
+  margin: 0;
+}
+
+.lf-form .search span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.lf-form .search input {
+  min-width: 0;
+  font-size: 14.5px;
+}
+
+.lf-alts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 2px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.lf-alts span + .chip,
+.lf-alts .chip + span {
+  margin-left: 2px;
+}
+
+.lf-alts .chip + span {
+  margin-left: 10px;
+}
+
+.lf-alts .chip {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 28px;
+}
+
+.ly-find .dlg-list {
+  margin-top: 10px;
+}
+
+.ly-find .row {
+  grid-template-columns: 1fr auto;
+  padding-right: 20px;
+}
+
+.lf-score {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.lf-score.good {
+  background: rgba(34, 176, 125, 0.14);
+  color: #1a9a6b;
+}
+
+.lf-score.ok {
+  background: var(--accent-weak);
+  color: var(--accent);
+}
