@@ -39,6 +39,7 @@ test('폰 ↔ PC 동기화: 찾기 → 페어링 → 파일 → 재생목록 순
     musicFolders: [pcMusic],
     ports: { ui: 0, sync: 0, discovery: 0 },
     lanHost: '127.0.0.1',
+    system: false,
     onQuit: () => {},
   });
   await app.start();
@@ -230,6 +231,30 @@ test('폰 ↔ PC 동기화: 찾기 → 페어링 → 파일 → 재생목록 순
     await phone.sync();
     assert.ok(fs.existsSync(path.join(pcMusic, 'From Phone', 'Windows', 'evil.wav')));
     assert.ok(!fs.existsSync(path.join(root, 'Windows')));
+  });
+
+  await t.test('동기화 전에 확인: 바뀔 내용을 미리 보여 주고 기다렸다가, 허락하면 한 번 동기화', async () => {
+    await ui(`/api/sync/devices/${phone.deviceId}`, 'PUT', { options: { confirm: true } });
+    const extra = song(41, '확인 테스트', '폰가수');
+    phone.addTrack(`${M}/폰가수/확인 테스트.wav`, extra, { title: '확인 테스트', artist: '폰가수', duration: 3 });
+    const before = lib.list().length;
+    const r1 = await phone.sync();
+    assert.equal(r1.uploaded, 0, '허락 전에는 아무것도 옮기지 않음');
+    assert.equal(lib.list().length, before);
+    assert.match(r1.plan.notices.join(' '), /허락/);
+    const { preview } = await ui(`/api/sync/devices/${phone.deviceId}/preview`);
+    assert.equal(preview.empty, false);
+    assert.ok(preview.upload.some((x) => x.title === '확인 테스트'), JSON.stringify(preview.upload));
+    assert.ok((await ui('/api/sync/status')).devices.find((d) => d.id === phone.deviceId).preview, '설정 화면에 미리 보기가 보임');
+    const ok = await ui(`/api/sync/devices/${phone.deviceId}/approve`, 'POST');
+    assert.ok(ok.approvedUntil > Date.now());
+    const r2 = await phone.sync();
+    assert.equal(r2.uploaded, 1);
+    assert.ok(lib.list().some((x) => x.title === '확인 테스트'));
+    // 한 번 허락하면 한 번만: 다음 동기화는 다시 확인을 기다린다 (바뀐 게 없으면 그냥 지나감)
+    const r3 = await phone.sync();
+    assert.equal(r3.uploaded, 0);
+    await ui(`/api/sync/devices/${phone.deviceId}`, 'PUT', { options: { confirm: false } });
   });
 
   await t.test('페어링 코드를 5번 틀리면 코드가 취소됨', async () => {

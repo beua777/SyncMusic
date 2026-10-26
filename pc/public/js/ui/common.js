@@ -4,7 +4,9 @@ import { ctx } from '../ctx.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { esc, fmtTime } from '../util.js';
+import { addBookmark, changeCover, openDetails, resetCover, saveUser, trackGainDialog, trackThemeDialog } from './details.js';
 import { dialog, openMenu, promptText, toast } from './dom.js';
+import { openLyricsEditor } from './lyrics.js';
 
 export const EQ = '<span class="eq"><i></i><i></i><i></i></span>';
 
@@ -50,6 +52,12 @@ export function mosaic(ids, cls = 'thumb') {
   }
   if (covers.length < 4 || covers.some((c) => noCover.has(c))) return `<div class="${cls}">${coverImg(covers.find((c) => !noCover.has(c)))}</div>`;
   return `<div class="${cls} mosaic">${covers.map((c) => `<img src="${coverUrl(c)}" alt="" loading="lazy" data-cover="${c}">`).join('')}</div>`;
+}
+
+// 재생목록 그림: 색·아이콘을 정했으면 그 타일, 아니면 곡 커버 모자이크
+export function playlistArt(p, cls = 'thumb') {
+  if (!p.color && !p.icon) return mosaic(p.entries, cls);
+  return `<div class="${cls} pl-art" style="--pl:${p.color || 'var(--accent)'}">${p.icon ? `<span class="pl-emoji">${esc(p.icon)}</span>` : icon('note')}</div>`;
 }
 
 // mode: list(커버) · album(트랙 번호) · edit(손잡이+삭제)
@@ -156,7 +164,22 @@ export function trackMenu(t, { playlistId = null, index = -1 } = {}) {
   items.push(
     { icon: 'artist', label: '아티스트로 이동', run: () => ctx.go(`#/artist/${encodeURIComponent(t.artist)}`) },
     { icon: 'folderOpen', label: '파일 위치 열기', run: () => post(`/api/tracks/${t.id}/reveal`).catch((e) => toast(e.message)) },
+    '-',
+    { icon: 'info', label: '곡 정보', run: () => openDetails(t.id) },
+    { icon: 'volume', label: t.userGain ? `곡 음량 (${t.userGain > 0 ? '+' : ''}${t.userGain}dB)` : '곡 음량', run: () => trackGainDialog(t) },
+    {
+      icon: t.noShuffle ? 'shuffle' : 'shuffleOff',
+      label: t.noShuffle ? '셔플에 다시 넣기' : '셔플에서 빼기',
+      run: () => saveUser(t.id, { noShuffle: !t.noShuffle }, t.noShuffle ? '셔플할 때 다시 나와요' : '셔플할 때 이 곡은 건너뛰어요').then(() => player.emit('queue')),
+    },
+    { icon: 'edit', label: '커버 바꾸기', run: () => changeCover([t.id]) },
   );
+  if (t.coverOriginal !== undefined) items.push({ icon: 'history', label: '원래 커버로', run: () => resetCover([t.id]) });
+  items.push(
+    { icon: 'palette', label: t.theme ? '이 곡 화면 테마 · 켜짐' : '이 곡 화면 테마', run: () => trackThemeDialog(t) },
+    { icon: 'lyrics', label: '가사 편집', run: () => openLyricsEditor(t) },
+  );
+  if (player.loadedId === t.id) items.push({ icon: 'bookmark', label: `지금 위치 북마크 (${fmtTime(player.time)})`, run: () => addBookmark(t.id) });
   if (playlistId && index >= 0) {
     items.push('-', {
       icon: 'trash',

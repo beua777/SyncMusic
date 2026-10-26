@@ -95,6 +95,39 @@ export async function setAutostart(enabled, { launcher, icon }) {
   return true;
 }
 
+// 수면 타이머가 끝났을 때 (화면에서 30초 세고 취소할 기회를 준 뒤에 부른다)
+//   sleep: 절전 모드 · shutdown: 5초 뒤 PC 끄기 (그사이 'shutdown /a'로 취소 가능)
+export async function powerAction(action) {
+  if (process.platform !== 'win32') throw new Error('Windows에서만 할 수 있어요');
+  if (action === 'sleep') {
+    return runPowerShell(
+      'Add-Type -AssemblyName System.Windows.Forms\n[void][System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)',
+      { timeout: 60_000 },
+    );
+  }
+  if (action === 'shutdown') {
+    spawn('shutdown.exe', ['/s', '/t', '5', '/c', 'SyncMusic 수면 타이머가 끝나서 PC를 꺼요'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    return '';
+  }
+  throw new Error('모르는 전원 동작');
+}
+
+// 휴지통으로 보내기 (중복 곡 정리). 영구 삭제가 아니라 휴지통에서 되살릴 수 있다
+export function recycle(files) {
+  const script = `
+Add-Type -AssemblyName Microsoft.VisualBasic
+$files = $env:SM_FILES -split [char]10
+$ok = 0
+foreach ($f in $files) {
+  if ($f -and (Test-Path -LiteralPath $f)) {
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    $ok++
+  }
+}
+[Console]::Out.Write($ok)`;
+  return runPowerShell(script, { env: { SM_FILES: files.join('\n') }, timeout: 120_000 }).then((n) => Number(n) || 0);
+}
+
 export async function createDesktopShortcut({ launcher, icon }) {
   const lnk = desktopShortcutPath();
   await createShortcut(lnk, { target: process.execPath, args: `"${launcher}"`, cwd: path.dirname(launcher), icon, windowStyle: 7 });

@@ -36,7 +36,80 @@ export async function readTrackInfo(file) {
   };
 }
 
-const lrcPathFor = (file) => file.slice(0, -path.extname(file).length) + '.lrc';
+export const lrcPathFor = (file) => file.slice(0, -path.extname(file).length) + '.lrc';
+
+const dbOf = (v) => (Number.isFinite(v?.dB) ? Math.round(v.dB * 100) / 100 : null);
+const ratioOf = (v) => (Number.isFinite(v?.ratio) ? Math.round(v.ratio * 10000) / 10000 : null);
+
+// 곡 상세 정보·음량 평준화에 쓰는 추가 정보 (처음 검색할 때 한 번 읽어 둔다)
+export async function readExtended(file) {
+  try {
+    const mm = await parseFile(file, { duration: false, skipCovers: true });
+    const c = mm.common;
+    const f = mm.format;
+    const rg = {
+      track: dbOf(c.replaygain_track_gain),
+      album: dbOf(c.replaygain_album_gain),
+      peak: ratioOf(c.replaygain_track_peak),
+    };
+    return {
+      bits: f.bitsPerSample || null,
+      channels: f.numberOfChannels || null,
+      container: f.container || null,
+      composer: clean(c.composer?.join?.(', ') ?? c.composer) || null,
+      comment: clean(c.comment?.map?.((x) => (typeof x === 'string' ? x : x?.text)).filter(Boolean).join(' / ')) || null,
+      bpm: Number.isFinite(c.bpm) ? Math.round(c.bpm) : null,
+      rg: rg.track !== null || rg.album !== null ? rg : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// 곡 상세 정보 패널: 태그를 모두 (파일에서 바로 읽음)
+export async function readAllTags(file) {
+  const mm = await parseFile(file, { duration: true, skipCovers: false });
+  const c = mm.common;
+  const f = mm.format;
+  const pic = selectCover(c.picture);
+  return {
+    format: {
+      container: f.container || null,
+      codec: f.codec || null,
+      codecProfile: f.codecProfile || null,
+      lossless: !!f.lossless,
+      sampleRate: f.sampleRate || null,
+      bits: f.bitsPerSample || null,
+      channels: f.numberOfChannels || null,
+      bitrate: f.bitrate ? Math.round(f.bitrate) : null,
+      duration: Number.isFinite(f.duration) ? Math.round(f.duration * 1000) / 1000 : null,
+      tool: f.tool || null,
+      tagTypes: f.tagTypes || [],
+    },
+    tags: {
+      title: c.title || null,
+      artist: c.artist || null,
+      artists: c.artists || null,
+      album: c.album || null,
+      albumartist: c.albumartist || null,
+      track: c.track?.no ? `${c.track.no}${c.track.of ? `/${c.track.of}` : ''}` : null,
+      disk: c.disk?.no ? `${c.disk.no}${c.disk.of ? `/${c.disk.of}` : ''}` : null,
+      year: c.year || null,
+      date: c.date || null,
+      genre: c.genre?.join(', ') || null,
+      composer: c.composer?.join?.(', ') || null,
+      lyricist: c.lyricist?.join?.(', ') || null,
+      comment: c.comment?.map?.((x) => (typeof x === 'string' ? x : x?.text)).filter(Boolean).join(' / ') || null,
+      bpm: c.bpm || null,
+      label: c.label?.join?.(', ') || null,
+      isrc: c.isrc?.join?.(', ') || null,
+      encodedby: c.encodedby || null,
+      replaygainTrack: dbOf(c.replaygain_track_gain),
+      replaygainAlbum: dbOf(c.replaygain_album_gain),
+    },
+    cover: pic ? { format: pic.format || null, bytes: pic.data?.length || 0, type: pic.type || null } : null,
+  };
+}
 
 export async function readCover(file) {
   try {

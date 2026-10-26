@@ -1,23 +1,30 @@
-// 시작 · 화면 이동 · 실시간 알림 · 단축키
+// 시작 · 화면 이동 · 실시간 알림 · 단축키 · 이어 듣기 · 수면 타이머 끝난 뒤 · 화면 꺼짐 막기 · 오류 기록
 import { get, post, subscribe } from './api.js';
 import { ctx } from './ctx.js';
 import { icon } from './icons.js';
 import { Player } from './player.js';
 import { store } from './store.js';
-import { $, debounce } from './util.js';
+import { $, debounce, esc, fmtTime } from './util.js';
+import { initLite, liteActive } from './lite.js';
 import { checkLetterbox, markPlaying, noCover, reloadPlaylists } from './ui/common.js';
-import { openMenu, toast } from './ui/dom.js';
+import { applyLayout, firstTab, setLite } from './ui/design.js';
+import { openMenu, showNotice, toast } from './ui/dom.js';
+import { onKeydown, shortcutsDialog } from './ui/keys.js';
+import { lyricsSettingsChanged } from './ui/lyrics.js';
 import { closeNp, initNowPlaying, isNpOpen, openNp, retint, showPhoneChip, sleepDialog } from './ui/nowplaying.js';
+import { openPip } from './ui/pip.js';
 import { bindSettingsEvents, onScanProgress, settingsView } from './ui/settings.js';
-import { bindSelectionBar, bindViewEvents, clearSelection, views } from './ui/views.js';
+import { bindStatsEvents, statsView, wrappedView } from './ui/stats.js';
+import { bindToolsEvents, errorsView, toolsView } from './ui/tools.js';
+import { bindSelectionBar, bindViewEvents, clearSelection, recordSearch, views } from './ui/views.js';
 
 const MAIN_TABS = ['tracks', 'playlists', 'albums', 'artists', 'folders'];
-const allViews = { ...views, settings: settingsView };
+const allViews = { ...views, settings: settingsView, stats: statsView, wrapped: wrappedView, tools: toolsView, errors: errorsView };
 let renderToken = 0;
 let navDepth = 0;
 
 function parseHash() {
-  const h = location.hash.replace(/^#\/?/, '') || 'tracks';
+  const h = location.hash.replace(/^#\/?/, '') || firstTab();
   const i = h.indexOf('/');
   const name = i < 0 ? h : h.slice(0, i);
   let param = i < 0 ? null : h.slice(i + 1);
@@ -26,13 +33,14 @@ function parseHash() {
   } catch {
     param = null;
   }
-  return { name: allViews[name] ? name : 'tracks', param };
+  return { name: allViews[name] ? name : firstTab(), param };
 }
 
 async function render({ keepScroll = false } = {}) {
   const r = parseHash();
   const sameRoute = ctx.route && ctx.route.name === r.name && ctx.route.param === r.param;
   ctx.route = r;
+  ctx.groups = {};
   if (r.name !== 'playlist') ctx.editing = null;
   if (!sameRoute) clearSelection(false);
   const main = $('#main');
@@ -80,7 +88,7 @@ function go(hash) {
 
 function back() {
   if (navDepth > 0) history.back();
-  else go('#/tracks');
+  else go(`#/${firstTab()}`);
 }
 
 function refreshIf(...names) {
@@ -92,6 +100,14 @@ function applyTheme() {
   if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
   retint();
+  applyLayout();
+}
+
+// ───── 화면에서 난 오류를 기록 화면(#/errors)에 남긴다 (너무 많으면 그만) ─────
+let errorsSent = 0;
+function reportError(message, detail) {
+  if (!message || errorsSent++ > 30) return;
+  post('/api/errors', { source: 'ui', message: String(message).slice(0, 300), detail: String(detail || '').slice(0, 3000), context: { route: location.hash } }).catch(() => {});
 }
 
 function initShell() {
@@ -103,15 +119,22 @@ function initShell() {
   $('#back').addEventListener('click', back);
   $('#btn-search').addEventListener('click', () => go('#/search'));
   $('#btn-more').addEventListener('click', (e) => openAppMenu(e.currentTarget));
+  const remember = debounce((q) => recordSearch(q), 3000); // 잠깐 멈추면 검색 기록에
   $('#search-input').addEventListener(
     'input',
     debounce((e) => {
       history.replaceState(history.state, '', `#/search/${encodeURIComponent(e.target.value)}`);
       render({ keepScroll: false });
+      remember(e.target.value);
     }, 120),
   );
+  $('#search-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') remember.flush(e.target.value);
+  });
   bindViewEvents($('#view'));
   bindSettingsEvents($('#view'));
+  bindToolsEvents($('#view'));
+  bindStatsEvents($('#view'));
   bindSelectionBar();
 
   document.addEventListener(
@@ -131,6 +154,13 @@ function initShell() {
     },
     true,
   );
+  // 다른 창을 보고 있으면 목록의 '재생 중' 막대 애니메이션을 멈춘다 (작아도 화면을 매 프레임 다시 그리게 함)
+  const focusClass = () => document.body.classList.toggle('unfocused', !document.hasFocus());
+  addEventListener('focus', focusClass);
+  addEventListener('blur', focusClass);
+  focusClass();
+  window.addEventListener('error', (e) => reportError(e.message, e.error?.stack || `${e.filename}:${e.lineno}`));
+  window.addEventListener('unhandledrejection', (e) => reportError(e.reason?.message || String(e.reason), e.reason?.stack));
 
   window.addEventListener('hashchange', () => {
     navDepth++;
@@ -138,41 +168,15 @@ function initShell() {
   });
 
   document.addEventListener('keydown', (e) => {
-    const typing = e.target.closest('input, textarea, select, [contenteditable]') && e.target.type !== 'range';
     if (e.key === 'Escape') {
-      if ($('#dialog').open || !$('#menu').hidden) return;
+      if ($('#dialog').open || !$('#menu').hidden) return undefined;
+      if (document.activeElement?.closest?.('#view .row, #view .album-card')) return document.activeElement.blur();
       if (ctx.selection.size) return clearSelection();
       if (isNpOpen()) return closeNp();
       if (ctx.route?.name === 'search') return back();
       return undefined;
     }
-    if ((e.ctrlKey && e.key.toLowerCase() === 'f') || (!typing && e.key === '/')) {
-      e.preventDefault();
-      return go('#/search');
-    }
-    if (typing) return undefined;
-    const p = ctx.player;
-    if (e.code === 'Space') {
-      e.preventDefault();
-      return p.toggle();
-    }
-    if (e.ctrlKey && e.key === 'ArrowRight') return p.next();
-    if (e.ctrlKey && e.key === 'ArrowLeft') return p.prev();
-    if (e.ctrlKey && e.key === 'ArrowUp') return p.setVolume(p.audio.volume + 0.05);
-    if (e.ctrlKey && e.key === 'ArrowDown') return p.setVolume(p.audio.volume - 0.05);
-    if (e.ctrlKey && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      return toast(p.toggleShuffle() ? '셔플 켜짐' : '셔플 꺼짐', 1300);
-    }
-    if (e.ctrlKey && e.key.toLowerCase() === 'r') {
-      e.preventDefault();
-      return toast({ off: '반복 안 함', all: '전체 반복', one: '한 곡 반복' }[p.cycleRepeat()], 1300);
-    }
-    if (e.ctrlKey && e.key.toLowerCase() === 'l') {
-      e.preventDefault();
-      return isNpOpen() ? closeNp() : openNp();
-    }
-    return undefined;
+    return onKeydown(e);
   });
 }
 
@@ -181,17 +185,123 @@ function openAppMenu(anchor) {
     [
       { icon: 'phone', label: '휴대폰 동기화', run: () => go('#/settings') },
       { icon: 'moon', label: '수면 타이머', run: () => sleepDialog() },
+      { icon: 'eq', label: '사운드 (이퀄라이저)', run: () => openNp('sound') },
       { icon: 'palette', label: '디자인 꾸미기', run: () => openNp('design') },
+      { icon: 'pip', label: '작은 창 (항상 위)', run: () => openPip(ctx.player) },
+      { icon: 'power', label: liteActive() ? '저사양 모드 끄기' : '저사양 모드 켜기', run: () => setLite(liteActive() ? 'off' : 'on') },
+      '-',
+      { icon: 'chart', label: '통계', run: () => go('#/stats') },
+      { icon: 'tools', label: '라이브러리 도구', run: () => go('#/tools') },
       {
         icon: 'sync',
         label: '음악 폴더 다시 검색',
         run: () => post('/api/library/rescan').then(() => toast('음악 폴더를 다시 검색해요')),
       },
+      { icon: 'keyboard', label: '단축키', run: () => shortcutsDialog(true) },
       '-',
       { icon: 'settings', label: '설정', run: () => go('#/settings') },
     ],
     { anchor },
   );
+}
+
+// ───── 수면 타이머가 끝난 뒤: 설정 → 전원 (앱 종료 · PC 절전 · PC 끄기). 30초 동안 취소할 수 있다 ─────
+const POWER_TEXT = { quit: 'SyncMusic을 종료해요', sleep: 'PC를 절전 모드로 바꿔요', shutdown: 'PC를 꺼요' };
+function onSlept() {
+  const act = store.settings.power?.sleepAction || 'pause';
+  if (!POWER_TEXT[act]) return;
+  let left = 30;
+  let timer = 0;
+  const text = () => `수면 타이머 끝 · <b>${left}초</b> 뒤에 ${POWER_TEXT[act]}`;
+  const n = showNotice({
+    icon: 'moon',
+    html: text(),
+    actions: [{ label: '취소', primary: true, run: () => clearInterval(timer) }],
+    onClose: () => clearInterval(timer),
+  });
+  timer = setInterval(async () => {
+    left--;
+    if (left > 0) return n.update(text());
+    clearInterval(timer);
+    n.close();
+    ctx.player.save();
+    try {
+      if (act === 'quit') {
+        await post('/api/system/quit');
+        document.body.innerHTML = '<div class="empty" style="padding-top:30vh"><h3>수면 타이머로 SyncMusic을 종료했어요</h3><p>이 창을 닫아도 돼요.</p></div>';
+      } else await post('/api/system/power', { action: act });
+    } catch (e) {
+      toast(e.message, 5000);
+    }
+  }, 1000);
+}
+
+// ───── 재생 중에는 화면이 꺼지지 않게 (설정 → 전원). 창이 보이는 동안만 ─────
+let wakeLock = null;
+async function updateWakeLock() {
+  const want = !!store.settings.power?.keepAwake && ctx.player?.playing && document.visibilityState === 'visible';
+  if (want && !wakeLock && 'wakeLock' in navigator) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+      });
+    } catch {
+      wakeLock = null; // 배터리 절약 모드 등에서는 거절될 수 있음
+    }
+  } else if (!want && wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+// ───── 지난번에 듣던 곡 이어 듣기 (재생 중에 창을 닫았거나 PC가 꺼졌을 때) ─────
+// 업데이트로 창이 방금 새로 고쳐졌으면(듣는 중이었으면) 바로 이어서 튼다. 브라우저가 막으면 알림으로
+async function offerResume(saved) {
+  const p = ctx.player;
+  const t = p.track;
+  if (!saved?.playing || !t) return;
+  const nav = performance.getEntriesByType('navigation')[0];
+  if (nav?.type === 'reload' && Date.now() - (saved.savedAt || 0) < 20_000) {
+    try {
+      await p.engine.play();
+      return;
+    } catch {
+      // 자동 재생이 막힘 → 아래 알림으로
+    }
+  }
+  const n = showNotice({
+    icon: 'history',
+    html: `지난번에 듣던 곡 · <b>${esc(t.title)}</b> ${fmtTime(saved.positionSec || 0)}부터`,
+    actions: [{ label: '이어 듣기', primary: true, run: () => p.toggle() }],
+    timeout: 25_000,
+  });
+  const onState = () => {
+    if (!p.playing) return;
+    n.close();
+    p.removeEventListener('state', onState);
+  };
+  p.addEventListener('state', onState);
+}
+
+// ───── 새 버전 알림 ─────
+let updateShown = false;
+function offerUpdate(u) {
+  if (!u?.available || updateShown || store.settings.updateCheck === false) return;
+  updateShown = true;
+  showNotice({
+    icon: 'update',
+    html: `SyncMusic 새 버전이 있어요 · <b>${u.count}개</b> 바뀜`,
+    actions: [{ label: '보기', primary: true, run: () => go('#/settings') }],
+    timeout: 20_000,
+  });
+}
+
+// ───── 출력 장치가 바뀌면 (헤드폰 연결 등) 그 장치에서 쓰던 음량으로 ─────
+function onAudioDevice(d) {
+  const prev = ctx.player.device;
+  ctx.player.setDevice(d);
+  if (prev && d && prev.id !== d.id) toast(`출력 장치: ${d.name}`, 2500);
 }
 
 function connectEvents() {
@@ -214,6 +324,8 @@ function connectEvents() {
     settings: (s) => {
       store.settings = s;
       applyTheme();
+      lyricsSettingsChanged();
+      updateWakeLock();
     },
     pairing: () => refreshIf('settings'),
     devices: () => refreshIf('settings'),
@@ -225,6 +337,16 @@ function connectEvents() {
       showPhoneChip(np);
       refreshIf('settings');
     },
+    syncpreview: (p) => {
+      refreshIf('settings');
+      showNotice({
+        icon: 'sync',
+        html: `<b>${esc(p.deviceName)}</b> 동기화 전에 확인이 필요해요 · 받을 곡 ${p.upload.length} · 보낼 곡 ${p.download.length} · 재생목록 ${p.playlists.length}`,
+        actions: [{ label: '확인하기', primary: true, run: () => go('#/settings') }],
+      });
+    },
+    audiodevice: onAudioDevice,
+    update: offerUpdate,
   });
   es.addEventListener('open', () => {
     clearTimeout(offlineTimer);
@@ -249,6 +371,7 @@ async function boot() {
   store.app = b.app;
   store.settings = b.settings;
   store.scan = b.scan;
+  await initLite(); // 노트북이면 전원 연결 여부 (저사양 모드 '배터리일 때만')
   applyTheme();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retint);
   store.setTracks(b.tracks);
@@ -261,6 +384,10 @@ async function boot() {
   initShell();
   initNowPlaying(player);
   player.restore(b.state);
+  player.addEventListener('slept', onSlept);
+  player.addEventListener('state', updateWakeLock);
+  document.addEventListener('visibilitychange', updateWakeLock);
+  store.on('power', updateWakeLock);
 
   store.on('playlists', () => refreshIf('playlists', 'playlist'));
   store.on('track', debounce(() => refreshIf('smart'), 500));
@@ -268,6 +395,13 @@ async function boot() {
 
   await render();
   connectEvents();
+  offerResume(b.state);
+  get('/api/system/audiodevice')
+    .then((d) => d.current && player.setDevice(d.current))
+    .catch(() => {});
+  get('/api/system/update')
+    .then(offerUpdate)
+    .catch(() => {});
   get('/api/sync/status')
     .then((s) => showPhoneChip(s.nowPlaying))
     .catch(() => {});
@@ -276,5 +410,6 @@ async function boot() {
 
 boot().catch((e) => {
   console.error(e);
-  document.body.innerHTML = `<div class="empty" style="padding-top:30vh"><h3>SyncMusic을 시작하지 못했어요</h3><p>${String(e.message || e)}</p></div>`;
+  reportError(`시작 실패: ${e.message || e}`, e.stack);
+  document.body.innerHTML = `<div class="empty" style="padding-top:30vh"><h3>SyncMusic을 시작하지 못했어요</h3><p>${esc(String(e.message || e))}</p></div>`;
 });

@@ -11,6 +11,43 @@ export function toast(msg, ms = 2600) {
   toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
+// 아래쪽 알림 막대 (이어 듣기 · 업데이트 · 동기화 확인 · 수면 타이머 끝). 한 번에 하나
+// actions: [{ label, primary, run }] · 버튼을 누르면 닫힌다 (run이 false를 돌려주면 그대로)
+let noticeTimer;
+let noticeId = 0;
+export function showNotice({ icon: ic = 'info', html, actions = [], timeout = 0, onClose } = {}) {
+  const el = $('#notice');
+  const id = ++noticeId;
+  clearTimeout(noticeTimer);
+  el.hidden = false;
+  el.innerHTML = `${icon(ic)}<div class="txt">${html}</div>${actions
+    .map((a, i) => `<button class="btn small${a.primary ? ' primary' : ''}" data-i="${i}">${esc(a.label)}</button>`)
+    .join('')}<button class="icon-btn" data-close aria-label="닫기">${icon('close')}</button>`;
+  const close = () => {
+    if (id !== noticeId) return; // 그새 다른 알림으로 바뀜
+    clearTimeout(noticeTimer);
+    el.hidden = true;
+    el.onclick = null;
+    onClose?.();
+  };
+  el.onclick = (e) => {
+    if (e.target.closest('[data-close]')) return close();
+    const b = e.target.closest('button[data-i]');
+    if (b && actions[b.dataset.i].run() !== false) close();
+    return undefined;
+  };
+  if (timeout) noticeTimer = setTimeout(close, timeout);
+  return {
+    close,
+    update: (h) => {
+      if (id === noticeId) el.querySelector('.txt').innerHTML = h;
+    },
+    get open() {
+      return id === noticeId && !el.hidden;
+    },
+  };
+}
+
 // 오른쪽 클릭·⋮ 메뉴. items: [{ icon, label, run, danger } | '-']
 export function openMenu(items, { x = 0, y = 0, anchor = null } = {}) {
   const el = $('#menu');
@@ -65,8 +102,10 @@ export function openMenu(items, { x = 0, y = 0, anchor = null } = {}) {
 }
 
 // One UI 대화상자: 제목 · 내용 · 아래쪽 텍스트 버튼
-export function dialog({ title, body = '', html = '', actions, onOpen }) {
+// cls: 'wide'면 넓은 대화상자 (곡 정보 등)
+export function dialog({ title, body = '', html = '', actions, onOpen, cls = '' }) {
   const dlg = $('#dialog');
+  dlg.className = cls;
   dlg.innerHTML = `<div class="dlg-title">${esc(title)}</div><div class="dlg-body">${html || esc(body)}</div><div class="dlg-actions">${actions
     .map((a, i) => `<button data-i="${i}" class="${a.danger ? 'danger' : ''}">${esc(a.label)}</button>`)
     .join('')}</div>`;

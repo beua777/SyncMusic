@@ -1,27 +1,32 @@
-// 미니 플레이어 · 전체 재생 화면 · 재생 순서 · 가사 · 수면 타이머 · 폰 이어듣기
-import { coverUrl, get, post } from '../api.js';
+// 미니 플레이어 · 전체 재생 화면 · 재생 순서 · 가사 · 사운드 · 디자인 · 수면 타이머 · 폰 이어듣기
+import { coverUrl, post } from '../api.js';
+import { Analyzer } from '../analyzer.js';
+import { Effects } from '../effects.js';
 import { icon } from '../icons.js';
 import { store } from '../store.js';
 import { $, $$, dominantColor, esc, fmtClock, fmtTime } from '../util.js';
-import { Effects } from '../effects.js';
 import { Visualizer } from '../visualizer.js';
 import { addToPlaylistDialog, coverImg, EQ, markPlaying, toggleFavorite, trackMenu } from './common.js';
-import { applyDesign, designTrackChanged, initDesign, renderDesign, setAlbumColor, setCoverImage } from './design.js';
+import { applyDesign, designTrackChanged, initDesign, renderDesign, setAlbumColor, setCoverImage, updateBgClock } from './design.js';
 import { dialog, openMenu, sortable, toast } from './dom.js';
+import { highlightLyric, initLyrics, loadLyrics, resetLyrics } from './lyrics.js';
+import { openPip } from './pip.js';
+import { initSound, maybeAnalyze, qualityBadge, qualityDialog, renderSound, setAudio } from './sound.js';
 
 let player;
 let viz;
 let fx;
+export let analyzer;
 let panel = readPref('np.panel', 'queue');
 let seeking = false;
-let lyrics = { id: null, synced: null, idx: -1 };
-let lyricsScrollHold = 0;
 let tintFor;
 let lastTrackId;
 let phoneDismissedAt = 0;
 
+const PANELS = ['queue', 'lyrics', 'sound', 'design'];
 const REPEAT_LABEL = { off: '반복 안 함', all: '전체 반복', one: '한 곡 반복' };
 const REPEAT_ICON = { off: 'repeatOff', all: 'repeat', one: 'repeatOne' };
+const SPEEDS = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
 function readPref(k, d) {
   try {
@@ -46,10 +51,11 @@ export function initNowPlaying(p) {
     <button class="icon-btn" data-act="next" aria-label="다음 곡">${icon('next')}</button>
   </div>
   <div class="mini-right">
-    <button class="icon-btn" data-act="shuffle"></button>
-    <button class="icon-btn" data-act="repeat"></button>
-    <button class="icon-btn" data-act="open-queue" aria-label="재생 순서" title="재생 순서">${icon('queue')}</button>
-    <div class="vol"><button class="icon-btn" data-act="mute" aria-label="음소거"></button><input type="range" id="mini-vol" min="0" max="1" step="0.01" aria-label="음량"></div>
+    <button class="icon-btn mini-shuffle" data-act="shuffle"></button>
+    <button class="icon-btn mini-repeat" data-act="repeat"></button>
+    <button class="icon-btn mini-queue" data-act="open-queue" aria-label="재생 순서" title="재생 순서">${icon('queue')}</button>
+    <button class="icon-btn mini-pip" data-act="pip" aria-label="작은 창 (항상 위)" title="작은 창 (항상 위)">${icon('pip')}</button>
+    <div class="vol mini-volume"><button class="icon-btn" data-act="mute" aria-label="음소거"></button><input type="range" id="mini-vol" min="0" max="1" step="0.01" aria-label="음량"></div>
   </div>
 </div>`;
 
@@ -66,12 +72,12 @@ export function initNowPlaying(p) {
     <div class="np-stage"><div class="np-glow"></div><canvas class="viz viz-ring" id="viz-ring" aria-hidden="true"></canvas><div class="cover np-art" id="np-art"></div></div>
     <canvas class="viz viz-strip" id="viz-strip" aria-hidden="true"></canvas>
     <div class="np-titlebar">
-      <div class="np-titles"><h2 id="np-title"></h2><a id="np-artist" href="#"></a></div>
+      <div class="np-titles"><h2 id="np-title"></h2><a id="np-artist" href="#"></a><button class="quality-badge" id="np-quality" data-act="quality" hidden></button></div>
       <button class="icon-btn heart" data-act="fav" id="np-fav" aria-label="즐겨찾기">${icon('heart')}</button>
       <button class="icon-btn" data-act="np-add" aria-label="재생목록에 추가" title="재생목록에 추가">${icon('plus')}</button>
     </div>
     <div class="np-seek">
-      <input type="range" id="np-range" min="0" max="1000" step="1" value="0" aria-label="재생 위치">
+      <div class="seek-wrap"><input type="range" id="np-range" min="0" max="1000" step="1" value="0" aria-label="재생 위치"><div class="seek-marks" id="np-marks"></div></div>
       <div class="np-times"><span id="np-cur">0:00</span><span id="np-dur">0:00</span></div>
     </div>
     <div class="np-controls">
@@ -84,19 +90,23 @@ export function initNowPlaying(p) {
     <div class="np-extra">
       <button class="icon-btn panel-toggle" data-act="panel-lyrics" aria-label="가사" title="가사">${icon('lyrics')}</button>
       <div class="vol"><button class="icon-btn" data-act="mute" aria-label="음소거"></button><input type="range" id="np-vol" min="0" max="1" step="0.01" aria-label="음량"></div>
-      <button class="icon-btn" data-act="sleep" id="np-sleep" aria-label="수면 타이머" title="수면 타이머">${icon('moon')}</button>
-      <button class="icon-btn" data-act="panel-design" aria-label="디자인 꾸미기" title="디자인 꾸미기">${icon('palette')}</button>
+      <button class="text-btn x-opt" data-act="speed" id="np-speed" title="재생 속도">1.0×</button>
+      <button class="icon-btn x-opt" data-act="ab" id="np-ab" aria-label="A-B 구간 반복" title="A-B 구간 반복: 시작(A) → 끝(B) → 끄기">${icon('ab')}</button>
+      <button class="icon-btn x-opt" data-act="sleep" id="np-sleep" aria-label="수면 타이머" title="수면 타이머">${icon('moon')}</button>
+      <button class="icon-btn x-opt" data-act="panel-sound" aria-label="사운드" title="사운드 (이퀄라이저·크로스페이드)">${icon('eq')}</button>
+      <button class="icon-btn x-opt" data-act="panel-design" aria-label="디자인 꾸미기" title="디자인 꾸미기">${icon('palette')}</button>
       <button class="icon-btn panel-toggle" data-act="panel-queue" aria-label="재생 순서" title="재생 순서">${icon('queue')}</button>
     </div>
   </div>
   <aside class="np-side">
     <div class="np-side-head">
-      <div class="seg" id="np-tabs"><button data-panel="queue">재생 순서</button><button data-panel="lyrics">가사</button><button data-panel="design">디자인</button></div>
+      <div class="seg" id="np-tabs"><button data-panel="queue">재생 순서</button><button data-panel="lyrics">가사</button><button data-panel="sound">사운드</button><button data-panel="design">디자인</button></div>
       <button class="icon-btn panel-close" data-act="panel-close" aria-label="닫기">${icon('close')}</button>
     </div>
     <div class="np-side-sub" id="np-side-sub"></div>
     <div class="np-panel" id="np-queue"></div>
-    <div class="np-panel" id="np-lyrics" hidden></div>
+    <div class="np-panel lyrics-panel" id="np-lyrics" hidden></div>
+    <div class="np-panel" id="np-sound" hidden></div>
     <div class="np-panel" id="np-design" hidden></div>
   </aside>
 </div>`;
@@ -127,14 +137,11 @@ export function initNowPlaying(p) {
     );
   });
   sortable($('#np-queue'), { onMove: (from, to) => player.moveInQueue(from, to), scroller: () => $('#np-queue') });
-  $('#np-lyrics').addEventListener('click', (e) => {
-    const p = e.target.closest('p[data-t]');
-    if (p) player.seek(Number(p.dataset.t));
-  });
-  $('#np-lyrics').addEventListener('wheel', () => {
-    lyricsScrollHold = Date.now() + 4000; // 직접 스크롤하는 동안은 따라가지 않음
-  });
   $('#np-artist').addEventListener('click', () => closeNp());
+  $('#np-marks').addEventListener('click', (e) => {
+    const m = e.target.closest('[data-t]');
+    if (m) player.seek(Number(m.dataset.t));
+  });
 
   const range = $('#np-range');
   range.addEventListener('input', () => {
@@ -152,7 +159,7 @@ export function initNowPlaying(p) {
       'wheel',
       (e) => {
         e.preventDefault();
-        player.setVolume((player.audio.muted ? 0 : player.audio.volume) + (e.deltaY < 0 ? 0.05 : -0.05));
+        player.setVolume((player.muted ? 0 : player.volume) + (e.deltaY < 0 ? 0.05 : -0.05));
       },
       { passive: false },
     );
@@ -164,15 +171,22 @@ export function initNowPlaying(p) {
   player.addEventListener('queue', onQueue);
   player.addEventListener('volume', onVolume);
   player.addEventListener('sleep', onSleep);
-  player.addEventListener('slept', () => toast('수면 타이머: 재생을 멈췄어요', 4000));
+  player.addEventListener('ab', updateMarks);
+  player.addEventListener('audiosettings', onAudioSettings);
   player.addEventListener('playerror', (e) => toast(`재생할 수 없는 파일이에요${e.detail ? `: ${e.detail.title}` : ''}`, 3500));
   store.on('playlists', updateFav);
+  store.on('track', (t) => {
+    if (t?.id === player.loadedId) {
+      updateMarks();
+      updateQuality();
+    }
+  });
   window.addEventListener('popstate', () => {
     if (isNpOpen() && !history.state?.np) closeNp(true);
   });
   matchMedia('(min-width: 1000px)').addEventListener('change', () => refreshPanel());
 
-  viz = new Visualizer(player.audio);
+  viz = new Visualizer(player.engine);
   viz.add($('#viz-strip'), 'strip', isNpOpen);
   viz.add($('#viz-ring'), 'ring', isNpOpen);
   viz.add($('#viz-bottom'), 'bottom', isNpOpen);
@@ -180,12 +194,18 @@ export function initNowPlaying(p) {
   fx = new Effects($('#fx'), viz, isNpOpen);
   fx.setCover($('#np-art'), $('#np .np-glow'));
   initDesign(viz, $('#np-design'), fx);
+  analyzer = new Analyzer();
+  initSound($('#np-sound'), analyzer);
+  initLyrics($('#np-lyrics'));
+  player.applyAudioSettings(store.settings.audio);
+  setTimeout(maybeAnalyze, 15_000); // 켜자마자 말고 조금 뒤에
 
-  showPanel(panel, false);
+  showPanel(PANELS.includes(panel) ? panel : 'queue', false);
   onTrack();
   onState();
   onVolume();
   onSleep();
+  onAudioSettings();
 }
 
 // ───── 열기·닫기 ─────
@@ -193,15 +213,25 @@ export function initNowPlaying(p) {
 export const isNpOpen = () => $('#np').classList.contains('open');
 const isWide = () => matchMedia('(min-width: 1000px)').matches;
 
+// 재생 화면이 다 올라오면 가려진 라이브러리·미니 플레이어는 그리지 않는다 (CPU 아끼기)
+let coverTimer = 0;
+function setCovered(on) {
+  clearTimeout(coverTimer);
+  if (on) coverTimer = setTimeout(() => document.body.classList.add('np-covered'), 400);
+  else document.body.classList.remove('np-covered');
+}
+
 export function openNp(withPanel) {
   const np = $('#np');
   if (!isNpOpen()) {
     np.classList.add('open');
     np.setAttribute('aria-hidden', 'false');
     history.pushState({ np: true }, '');
+    setCovered(true);
   }
   if (withPanel) showPanel(withPanel, true);
   else refreshPanel(true);
+  updateBgClock(); // 무지개 배경은 재생 화면이 열려 있을 때만 움직인다
   viz.wake(true);
   fx.wake();
 }
@@ -211,7 +241,9 @@ export function closeNp(fromPopstate = false) {
   const np = $('#np');
   np.classList.remove('open', 'side-open');
   np.setAttribute('aria-hidden', 'true');
+  setCovered(false);
   if (!fromPopstate && history.state?.np) history.back();
+  updateBgClock();
   viz.setDemo(false);
   viz.wake(true);
   fx.wake();
@@ -225,10 +257,8 @@ function showPanel(name, open = false) {
     // 무시
   }
   for (const b of $$('#np-tabs button')) b.classList.toggle('on', b.dataset.panel === name);
-  $('#np-queue').hidden = name !== 'queue';
-  $('#np-lyrics').hidden = name !== 'lyrics';
-  $('#np-design').hidden = name !== 'design';
-  $('#np').classList.toggle('design-open', name === 'design');
+  for (const p of PANELS) $(`#np-${p}`).hidden = name !== p;
+  $('#np').classList.toggle('design-open', name === 'design' || name === 'sound');
   if (open && !isWide()) $('#np').classList.add('side-open');
   refreshPanel(true);
 }
@@ -238,6 +268,7 @@ const panelVisible = (name) => isNpOpen() && panel === name && (isWide() || $('#
 function refreshPanel(scrollToCurrent = false) {
   if (panelVisible('queue')) renderQueue(scrollToCurrent);
   else if (panelVisible('lyrics')) loadLyrics();
+  else if (panelVisible('sound')) renderSound();
   else if (panelVisible('design')) renderDesign();
   viz?.setDemo(panelVisible('design')); // 멈춰 있어도 디자인 탭에서는 스펙트럼이 움직여서 바로 보임
   updateSideSub();
@@ -258,6 +289,8 @@ function onTrack() {
   a.href = t ? `#/artist/${encodeURIComponent(t.artist)}` : '#';
   document.title = t ? `${t.title} - ${t.artist} · SyncMusic` : 'SyncMusic';
   updateFav();
+  updateQuality();
+  updateMarks();
   if (t?.id !== lastTrackId) {
     lastTrackId = t?.id;
     designTrackChanged();
@@ -266,7 +299,41 @@ function onTrack() {
   markPlaying(document);
   $('#np-source').textContent = sourceLabel();
   if (panelVisible('lyrics')) loadLyrics();
-  else lyrics = { id: null, synced: null, idx: -1 };
+  else resetLyrics();
+}
+
+function updateQuality() {
+  const b = $('#np-quality');
+  const q = qualityBadge(player.track);
+  b.hidden = !q;
+  b.textContent = q;
+  b.classList.toggle('hi', !!player.track?.lossless);
+}
+
+// 진행 막대 위의 표시: A-B 구간, 북마크
+function updateMarks() {
+  const el = $('#np-marks');
+  const d = player.duration || player.track?.duration || 0;
+  const ab = player.ab;
+  const pct = (s) => `${Math.max(0, Math.min(100, (s / d) * 100))}%`;
+  let html = '';
+  if (d && ab) {
+    html += `<span class="ab-range" style="left:${pct(ab.a)};width:${ab.b === null ? '2px' : `calc(${pct(ab.b)} - ${pct(ab.a)})`}"></span>`;
+  }
+  if (d) for (const b of player.track?.bookmarks || []) html += `<button class="bm-mark" style="left:${pct(b.t)}" data-t="${b.t}" title="${esc(`${fmtTime(b.t)} ${b.note || ''}`)}"></button>`;
+  el.innerHTML = html;
+  const btn = $('#np-ab');
+  btn.classList.toggle('on', !!ab);
+  btn.classList.toggle('half', !!ab && ab.b === null);
+  btn.title = !ab ? 'A-B 구간 반복: 누르면 지금이 시작(A)' : ab.b === null ? `A ${fmtTime(ab.a)} · 한 번 더 누르면 끝(B)` : `${fmtTime(ab.a)}~${fmtTime(ab.b)} 반복 중 · 누르면 끄기`;
+}
+
+function onAudioSettings() {
+  const r = player.opts.rate || 1;
+  const b = $('#np-speed');
+  b.textContent = `${r.toFixed(r * 10 === Math.round(r * 10) ? 1 : 2)}×`;
+  b.classList.toggle('on', Math.abs(r - 1) > 0.001);
+  if (panelVisible('sound')) renderSound();
 }
 
 function onState() {
@@ -305,7 +372,7 @@ function onTime() {
     $('#np-cur').textContent = fmtTime(c);
   }
   $('#np-dur').textContent = fmtTime(d);
-  if (lyrics.synced) highlightLyric(c);
+  if (panelVisible('lyrics')) highlightLyric(c);
 }
 
 function onQueue() {
@@ -315,7 +382,7 @@ function onQueue() {
 }
 
 function onVolume() {
-  const vol = player.audio.muted ? 0 : player.audio.volume;
+  const vol = player.muted ? 0 : player.volume;
   for (const v of [$('#mini-vol'), $('#np-vol')]) {
     v.value = vol;
     v.style.setProperty('--p', `${vol * 100}%`);
@@ -350,7 +417,7 @@ function sourceLabel() {
 function updateSideSub() {
   const q = player.queue;
   const el = $('#np-side-sub');
-  if (panel === 'design') {
+  if (panel === 'design' || panel === 'sound') {
     el.textContent = '고르면 바로 바뀌고 저장돼요';
     return;
   }
@@ -391,9 +458,10 @@ function renderQueue(scrollToCurrent) {
   el.innerHTML = v
     .map((it) => {
       const t = store.tracks.get(it.id);
-      return `<div class="row track${it.current ? ' playing' : ''}${it.index < q.pos ? ' past' : ''}" data-qi="${it.index}" data-key="${it.key}" data-id="${it.id}">
+      const skip = q.skipped(it.id);
+      return `<div class="row track${it.current ? ' playing' : ''}${it.index < q.pos ? ' past' : ''}${skip ? ' skip' : ''}" data-qi="${it.index}" data-key="${it.key}" data-id="${it.id}">
 <div class="thumb">${coverImg(t ? store.coverIdFor(t) : null)}${EQ}</div>
-<div class="meta"><div class="title">${esc(t?.title || '없는 곡')}</div><div class="sub">${esc(t?.artist || '')}</div></div>
+<div class="meta"><div class="title">${esc(t?.title || '없는 곡')}</div><div class="sub">${skip ? '셔플 제외 · ' : ''}${esc(t?.artist || '')}</div></div>
 <div class="trail"><button class="icon-btn" data-act="q-remove" aria-label="대기열에서 빼기">${icon('close')}</button><span class="icon-btn drag keep" aria-label="끌어서 순서 바꾸기">${icon('drag')}</span></div></div>`;
     })
     .join('');
@@ -408,51 +476,22 @@ function renderQueue(scrollToCurrent) {
   }
 }
 
-// ───── 가사 ─────
-
-async function loadLyrics() {
-  const el = $('#np-lyrics');
-  const t = player.track;
-  if (!t) {
-    lyrics = { id: null, synced: null, idx: -1 };
-    el.innerHTML = '<div class="lyrics-empty">재생 중인 곡이 없어요</div>';
-    return;
-  }
-  if (lyrics.id === t.id) return;
-  lyrics = { id: t.id, synced: null, idx: -1 };
-  el.innerHTML = '<div class="lyrics-empty">가사를 불러오는 중…</div>';
-  try {
-    const ly = await get(`/api/tracks/${t.id}/lyrics`);
-    if (lyrics.id !== t.id) return;
-    if (ly.synced?.length) {
-      lyrics.synced = ly.synced;
-      el.innerHTML = `<div class="lyrics">${ly.synced.map((l, i) => `<p data-li="${i}" data-t="${l.t}">${esc(l.line) || '♪'}</p>`).join('')}</div>`;
-      highlightLyric(player.time, true);
-    } else if (ly.text) {
-      el.innerHTML = `<div class="lyrics plain">${esc(ly.text)}</div>`;
-    } else {
-      el.innerHTML = '<div class="lyrics-empty">가사가 없어요<br><small>곡 파일의 가사 태그나, 같은 이름의 .lrc 파일을 읽어요</small></div>';
-    }
-  } catch {
-    el.innerHTML = '<div class="lyrics-empty">가사를 불러오지 못했어요</div>';
-  }
-}
-
-function highlightLyric(time, force = false) {
-  const s = lyrics.synced;
-  let i = -1;
-  for (let k = 0; k < s.length && s[k].t <= time + 0.15; k++) i = k;
-  if (i === lyrics.idx && !force) return;
-  lyrics.idx = i;
-  const el = $('#np-lyrics');
-  el.querySelector('p.now')?.classList.remove('now');
-  const p = el.querySelector(`p[data-li="${i}"]`);
-  if (!p) return;
-  p.classList.add('now');
-  if (panelVisible('lyrics') && Date.now() > lyricsScrollHold) p.scrollIntoView({ block: 'center', behavior: force ? 'auto' : 'smooth' });
-}
-
 // ───── 동작 ─────
+
+function speedMenu(anchor) {
+  const cur = player.opts.rate || 1;
+  openMenu(
+    SPEEDS.map((r) => ({
+      icon: Math.abs(cur - r) < 0.001 ? 'check' : 'speed',
+      label: `${r}배${r === 1 ? ' (보통)' : ''}`,
+      run: () => {
+        setAudio({ rate: r });
+        toast(`재생 속도 ${r}배`, 1300);
+      },
+    })),
+    { anchor },
+  );
+}
 
 function onClick(e) {
   const b = e.target.closest('[data-act]');
@@ -485,10 +524,22 @@ function onClick(e) {
       return npMenu(b);
     case 'sleep':
       return sleepDialog();
+    case 'speed':
+      return speedMenu(b);
+    case 'ab': {
+      const ab = player.cycleAB();
+      return toast(!ab ? 'A-B 반복을 껐어요' : ab.b === null ? `A: ${fmtTime(ab.a)} · 끝낼 곳에서 한 번 더 눌러요` : `${fmtTime(ab.a)} ~ ${fmtTime(ab.b)} 반복`, 2000);
+    }
+    case 'quality':
+      return qualityDialog();
+    case 'pip':
+      return openPip(player);
     case 'panel-lyrics':
       return showPanel('lyrics', true);
     case 'panel-queue':
       return showPanel('queue', true);
+    case 'panel-sound':
+      return showPanel('sound', true);
     case 'panel-design':
       return showPanel('design', true);
     case 'panel-close':
@@ -505,6 +556,10 @@ function npMenu(anchor) {
   const items = t ? trackMenu(t).filter((it) => it === '-' || !['다음에 재생', '재생 대기열에 추가'].includes(it.label)) : [];
   if (items.length) items.push('-');
   items.push(
+    { icon: 'lyrics', label: '가사', run: () => showPanel('lyrics', true) },
+    { icon: 'queue', label: '재생 순서', run: () => showPanel('queue', true) },
+    { icon: 'pip', label: '작은 창 (항상 위)', run: () => openPip(player) },
+    { icon: 'eq', label: '사운드 (이퀄라이저·크로스페이드)', run: () => showPanel('sound', true) },
     { icon: 'palette', label: '디자인 꾸미기', run: () => showPanel('design', true) },
     { icon: 'moon', label: player.sleep ? '수면 타이머 끄기' : '수면 타이머', run: () => (player.sleep ? (player.clearSleep(), toast('수면 타이머를 껐어요')) : sleepDialog()) },
     { icon: 'trash', label: '재생 대기열 비우기', danger: true, run: () => player.clearQueue() },
@@ -521,9 +576,10 @@ export async function sleepDialog() {
     [90, '1시간 30분 뒤'],
     ['track', '지금 곡이 끝나면'],
   ];
+  const after = { pause: '멈추기만', quit: '멈추고 SyncMusic 종료', sleep: '멈추고 PC 절전', shutdown: '멈추고 PC 끄기' }[store.settings.power?.sleepAction || 'pause'];
   const html = `<div class="dlg-list">${opts
     .map(([v, l]) => `<div class="row" data-v="${v}"><div class="thumb folder-icon">${icon('moon')}</div><div class="meta"><div class="title">${l}</div></div><div></div></div>`)
-    .join('')}</div>`;
+    .join('')}</div><p class="dz-note">끝나면: ${after} (설정 → 전원에서 바꿔요)</p>`;
   const v = await dialog({
     title: '수면 타이머',
     html,
@@ -571,3 +627,4 @@ export function showPhoneChip(np) {
     }
   };
 }
+

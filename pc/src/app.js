@@ -1,16 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { AudioDevices } from './audiodevice.js';
 import { DEFAULT_PORTS, defaultDataDir } from './config.js';
 import { Covers } from './covers.js';
+import { ErrorLog } from './errors.js';
 import { EventHub } from './events.js';
+import { History } from './history.js';
 import { Library } from './library.js';
+import { LyricsIndex, Translator } from './lyrics.js';
 import { Playlists } from './playlists.js';
 import { Settings } from './settings.js';
 import { startDiscovery } from './sync/discovery.js';
 import { createLanServer } from './sync/lanServer.js';
 import { SyncService } from './sync/service.js';
 import { createUiServer } from './uiServer.js';
+import { Updater } from './update.js';
 import { JsonStore } from './util/jsonfile.js';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // 앱 전체 조립. 테스트에서는 dataDir·musicFolders·ports(0 = 빈 포트)를 바꿔서 여러 개를 띄운다.
 export async function createApp(opts = {}) {
@@ -27,6 +35,12 @@ export async function createApp(opts = {}) {
   const state = new JsonStore(path.join(dataDir, 'state.json'), {});
   const events = new EventHub();
   const sync = new SyncService({ dataDir, library, playlists, settings });
+  const history = new History(dataDir);
+  const errors = new ErrorLog(dataDir);
+  const translator = new Translator(dataDir);
+  const lyricsIndex = new LyricsIndex(library);
+  const audioDevices = new AudioDevices(dataDir);
+  const updater = new Updater({ root: REPO_ROOT, enabled: () => settings.data.updateCheck !== false });
 
   library.on('remap', (oldId, newId) => playlists.remap(oldId, newId));
   library.on('changed', (info) => events.emit('library', info));
@@ -36,8 +50,30 @@ export async function createApp(opts = {}) {
   sync.on('devices', () => events.emit('devices', sync.devicesPublic()));
   sync.on('log', (e) => events.emit('synclog', e));
   sync.on('nowplaying', (np) => events.emit('nowplaying', np));
+  sync.on('preview', (p) => events.emit('syncpreview', p));
+  sync.on('log', (e) => e.level === 'warn' && /실패|오류|못/.test(e.msg) && errors.add({ source: 'sync', message: e.msg }));
+  audioDevices.on('change', (d) => events.emit('audiodevice', d));
+  updater.on('available', (u) => events.emit('update', u));
 
-  const app = { dataDir, lanHost, ports: { ...ports }, settings, library, playlists, state, covers, events, sync, lanError: null };
+  const app = {
+    dataDir,
+    lanHost,
+    ports: { ...ports },
+    settings,
+    library,
+    playlists,
+    state,
+    covers,
+    events,
+    sync,
+    history,
+    errors,
+    translator,
+    lyricsIndex,
+    audioDevices,
+    updater,
+    lanError: null,
+  };
   let uiServer = null;
   let lanServer = null;
   let discovery = null;
@@ -71,6 +107,10 @@ export async function createApp(opts = {}) {
       app.initialScan = library.scan();
       library.watch();
     }
+    if (opts.system !== false) {
+      audioDevices.start();
+      updater.start();
+    }
     return app;
   };
 
@@ -78,10 +118,13 @@ export async function createApp(opts = {}) {
     if (stopped) return;
     stopped = true;
     library.unwatch();
+    audioDevices.stop();
+    updater.stop();
     events.closeAll();
     await Promise.all([close(uiServer), close(lanServer), discovery?.close()]);
     await library.scanning;
-    for (const s of [library, playlists, sync, settings, state]) s.flush();
+    for (const s of [library, playlists, sync, settings, state, errors, translator, audioDevices]) s.flush();
+    await history.flush();
   };
 
   app.quit =

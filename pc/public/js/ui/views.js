@@ -1,21 +1,26 @@
 // 탭과 상세 화면: 트랙 · 재생목록 · 앨범 · 아티스트 · 폴더 · 검색
-import { del, post, put } from '../api.js';
+import { del, get, post, put } from '../api.js';
 import { ctx } from '../ctx.js';
 import { icon } from '../icons.js';
+import { phoneticKey } from '../phonetic.js';
+import { applyFilter, FIELDS, fuzzySearch, OPS, parseNatural } from '../search.js';
 import { store } from '../store.js';
 import { $, collator, esc, fmtAgo, fmtTotal, matchQuery, normSearch } from '../util.js';
 import {
   addToPlaylistDialog,
   coverImg,
-  mosaic,
+  markPlaying,
   newPlaylist,
+  playlistArt,
   reloadPlaylists,
   removeFromPlaylist,
   showTrackMenu,
   splitEntries,
   trackRow,
 } from './common.js';
+import { changeCover, resetCover } from './details.js';
 import { confirmDialog, openMenu, promptText, sortable, toast } from './dom.js';
+import { dedupeDialog, modeLabel, playlistHistoryDialog, playlistModeDialog, playlistStyleDialog, trashDialog } from './playlistTools.js';
 
 const pref = {
   get(k, d) {
@@ -73,8 +78,10 @@ const artistRow = (ar) =>
 const folderRow = (f) =>
   `<div class="row folder" data-dir="${esc(f.dir)}"><div class="thumb folder-icon">${icon('folder')}</div><div class="meta"><div class="title">${esc(f.name)}</div><div class="sub">${f.tracks.length}곡 · ${esc(f.dir)}</div></div><div class="trail"><button class="icon-btn" data-act="play-folder" aria-label="셔플 재생">${icon('shuffle')}</button></div></div>`;
 
-const playlistRow = (p) =>
-  `<div class="row pl" data-pl="${p.id}">${mosaic(p.entries)}<div class="meta"><div class="title">${esc(p.name)}</div><div class="sub">${p.entries.length}곡${p.origin === 'phone' ? ' · 폰에서 가져옴' : ''}</div></div><div class="trail">${p.syncToPhone ? `<span class="badge">${icon('phone')}동기화</span>` : ''}<button class="icon-btn" data-act="pl-more" aria-label="더 보기">${icon('more')}</button></div></div>`;
+const playlistRow = (p) => {
+  const mode = modeLabel(p.mode);
+  return `<div class="row pl" data-pl="${p.id}">${playlistArt(p)}<div class="meta"><div class="title">${esc(p.name)}</div><div class="sub">${p.entries.length}곡${p.origin === 'phone' ? ' · 폰에서 가져옴' : ''}${mode ? ` · ${mode}` : ''}</div></div><div class="trail">${p.syncToPhone ? `<span class="badge">${icon('phone')}동기화</span>` : ''}<button class="icon-btn" data-act="pl-more" aria-label="더 보기">${icon('more')}</button></div></div>`;
+};
 
 function hero({ cover, kicker, title, sub, actions }) {
   return `<div class="hero">${cover}<div class="hero-info"><div class="hero-kicker">${kicker}</div><h2>${esc(title)}</h2><div class="hero-sub">${sub}</div><div class="hero-actions">${actions}</div></div></div>`;
@@ -149,6 +156,8 @@ function playlistsView(el) {
   <button class="btn" data-act="new-playlist">${icon('plus')}재생목록 만들기</button>
   <button class="btn" data-act="import-playlist">${icon('import')}가져오기</button>
   <input type="file" id="import-file" accept=".m3u,.m3u8,.smpl" multiple hidden>
+  <span class="spacer"></span>
+  <button class="sort-btn" data-act="pl-trash">${icon('trash')}지운 재생목록</button>
 </div>
 <div class="section-title">기본 재생목록</div>
 <div class="tiles">${tiles
@@ -251,15 +260,16 @@ function playlistView(el, id) {
   const tracks = visible.map((x) => store.tracks.get(x));
   setList(tracks, { type: 'playlist', id, name: p.name });
   const total = tracks.reduce((s, t) => s + (t.duration || 0), 0);
-  const cover = p.id === 'favorites' ? `<div class="cover solid" style="background:#f0445a;color:#fff">${icon('heartFill')}</div>` : mosaic(p.entries, 'cover');
+  const cover = p.id === 'favorites' ? `<div class="cover solid" style="background:#f0445a;color:#fff">${icon('heartFill')}</div>` : playlistArt(p, 'cover');
   const sync = p.system ? '' : p.syncToPhone ? ` · ${icon('phone')} 폰과 동기화 켜짐` : ' · 폰 동기화 꺼짐';
+  const mode = modeLabel(p.mode);
   el.innerHTML = `${hero({
     cover,
     kicker: p.system ? '기본 재생목록' : p.origin === 'phone' ? '재생목록 · 폰에서 가져옴' : '재생목록',
     title: p.name,
-    sub: `${tracks.length}곡 · ${fmtTotal(total)}${missing.length ? ` · 아직 PC에 없는 곡 ${missing.length}개` : ''}${sync}`,
+    sub: `${tracks.length}곡 · ${fmtTotal(total)}${missing.length ? ` · 아직 PC에 없는 곡 ${missing.length}개` : ''}${sync}${mode ? ` · ${mode}` : ''}`,
     actions: playButtons(
-      `${tracks.length ? `<button class="btn${editing ? ' primary' : ''}" data-act="edit-playlist">${icon(editing ? 'check' : 'edit')}${editing ? '완료' : '순서 편집'}</button>` : ''}${p.system ? '' : `<button class="icon-btn" data-act="pl-more" data-pl="${p.id}" aria-label="더 보기">${icon('more')}</button>`}`,
+      `${tracks.length ? `<button class="btn${editing ? ' primary' : ''}" data-act="edit-playlist">${icon(editing ? 'check' : 'edit')}${editing ? '완료' : '순서 편집'}</button>` : ''}<button class="icon-btn" data-act="pl-more" data-pl="${p.id}" aria-label="더 보기">${icon('more')}</button>`,
     ),
   })}
 ${
@@ -293,27 +303,214 @@ ${tracks.length ? `<div class="card list">${tracks.map((t, i) => trackRow(t, i, 
   return { title: s.name, detail: true };
 }
 
+// ───────── 검색 ─────────
+// 글자 그대로 · 초성 · 소리(가나·한글·로마자·한자 읽기) · 자연어("최근 추가한 일본 노래 10곡") · 고급 필터 · 가사 · 오타 허용
+
+const EXAMPLES = ['최근 추가한 일본 노래', '많이 들은 곡 20곡', '3분 이하 짧은 곡', '가사 있는 즐겨찾기', '오래 안 들은 곡', '90년대', '무손실', '자주 넘긴 곡'];
+let filter = null; // 고급 필터 { match, rules, sort, limit }
+let filterOpen = false;
+let lastNl = null;
+let lyricsTimer = 0;
+let lyricsToken = 0;
+
+const emptyFilter = () => ({ match: 'all', rules: [], sort: null, limit: 0 });
+
+// 값을 다 채운 조건만 쓴다
+function validRule(r) {
+  const f = FIELDS[r.field];
+  if (!f || !OPS[f.type]?.[r.op]) return false;
+  if (f.type === 'bool' || (f.type === 'date' && r.op === 'never')) return true;
+  if (r.op === 'between') return Array.isArray(r.value) && r.value.length === 2 && r.value.every((x) => x !== '' && x !== null && Number.isFinite(Number(x)));
+  if (f.type === 'number' || f.type === 'date') return r.value !== '' && r.value !== null && r.value !== undefined && Number.isFinite(Number(r.value));
+  return String(r.value ?? '').trim() !== '';
+}
+
+const activeFilter = () => (filter ? { ...filter, rules: filter.rules.filter(validRule) } : null);
+const hasFilter = () => {
+  const f = activeFilter();
+  return !!f && (f.rules.length > 0 || !!f.sort?.by || f.limit > 0);
+};
+
+function filterCtx() {
+  const inPl = new Set(store.playlists.filter((p) => !p.system).flatMap((p) => p.entries));
+  return { isFavorite: (id) => store.isFavorite(id), inPlaylist: (id) => inPl.has(id), now: Date.now() };
+}
+
+// 설정 화면 등에서: 이 필터로 검색 화면 열기
+export function searchWithFilter(f) {
+  filter = { ...emptyFilter(), ...structuredClone(f) };
+  filterOpen = true;
+  ctx.go('#/search');
+}
+
+const defaultValue = (field, op) => {
+  const t = FIELDS[field].type;
+  if (t === 'bool') return true;
+  if (t === 'enum') return Object.keys(FIELDS[field].values)[0];
+  if (op === 'between') return ['', ''];
+  return '';
+};
+
+function filterBox() {
+  const f = filter || emptyFilter();
+  const fieldOpts = (sel) => Object.entries(FIELDS).map(([k, x]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${x.label}</option>`).join('');
+  const opOpts = (field, sel) =>
+    Object.entries(OPS[FIELDS[field].type])
+      .map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${l}</option>`)
+      .join('');
+  const value = (r, i) => {
+    const t = FIELDS[r.field].type;
+    if (t === 'bool' || (t === 'date' && r.op === 'never')) return '';
+    if (t === 'enum') return `<select class="select" data-fv="${i}">${Object.entries(FIELDS[r.field].values).map(([k, l]) => `<option value="${k}" ${r.value === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    if (r.op === 'between') {
+      const v = Array.isArray(r.value) ? r.value : ['', ''];
+      return `<input type="number" class="fb-num" data-fv="${i}" data-k="0" value="${esc(v[0])}"><span>~</span><input type="number" class="fb-num" data-fv="${i}" data-k="1" value="${esc(v[1])}">`;
+    }
+    if (t === 'number' || t === 'date') return `<input type="number" class="fb-num" data-fv="${i}" value="${esc(r.value ?? '')}">${t === 'date' ? '<span>일</span>' : ''}`;
+    return `<input type="text" class="fb-text" data-fv="${i}" value="${esc(r.value ?? '')}" spellcheck="false" placeholder="값">`;
+  };
+  const sortable = Object.entries(FIELDS).filter(([, x]) => x.type !== 'bool');
+  return `<div class="filter-box card">
+  <div class="fb-head"><b>${icon('filter')}고급 필터</b>
+    <div class="seg" data-fmatch><button data-v="all" class="${f.match !== 'any' ? 'on' : ''}">조건 모두</button><button data-v="any" class="${f.match === 'any' ? 'on' : ''}">하나라도</button></div>
+    <span class="spacer"></span><button class="icon-btn" data-act="filter-close" aria-label="고급 필터 닫기">${icon('close')}</button></div>
+  <div class="fb-rules">${
+    f.rules.map((r, i) => `<div class="fb-rule"><select class="select" data-ff="${i}">${fieldOpts(r.field)}</select><select class="select" data-fo="${i}">${opOpts(r.field, r.op)}</select>${value(r, i)}<button class="icon-btn" data-act="fr-del" data-i="${i}" aria-label="조건 빼기">${icon('close')}</button></div>`).join('') ||
+    '<p class="dz-note">조건을 더해서 곡을 골라요. 예: 장르 포함 "J-Pop" + 재생 횟수 보다 큼 5 + 마지막 재생 30일보다 오래됨</p>'
+  }</div>
+  <div class="fb-foot"><button class="btn small" data-act="fr-add">${icon('plus')}조건 더하기</button>
+    <label class="fb-inline">정렬 <select class="select" data-fsort><option value="">기본</option>${sortable.map(([k, x]) => `<option value="${k}" ${f.sort?.by === k ? 'selected' : ''}>${x.label}</option>`).join('')}<option value="random" ${f.sort?.by === 'random' ? 'selected' : ''}>무작위</option></select></label>
+    ${f.sort?.by && f.sort.by !== 'random' ? `<select class="select" data-fdir><option value="desc" ${f.sort.dir !== 'asc' ? 'selected' : ''}>큰 것부터</option><option value="asc" ${f.sort.dir === 'asc' ? 'selected' : ''}>작은 것부터</option></select>` : ''}
+    <label class="fb-inline">최대 <input type="number" class="fb-num" min="0" max="5000" data-flimit value="${f.limit || ''}" placeholder="전부">곡</label>
+    <span class="spacer"></span>
+    <button class="btn small" data-act="filter-save">${icon('check')}필터 저장</button><button class="btn small" data-act="filter-clear">지우기</button></div>
+</div>`;
+}
+
+const subFor = (t, by) =>
+  by === 'playCount'
+    ? `${t.artist} · ${t.playCount || 0}회`
+    : by === 'addedAt'
+      ? `${t.artist} · ${fmtAgo(t.addedAt)} 추가`
+      : by === 'lastPlayed'
+        ? `${t.artist} · ${t.lastPlayed ? fmtAgo(t.lastPlayed) : '안 들음'}`
+        : by === 'skips'
+          ? `${t.artist} · ${t.skips || 0}번 넘김`
+          : `${t.artist} · ${t.album}`;
+
+function searchHome(el) {
+  const s = store.settings;
+  const hist = s.searchHistory || [];
+  const saved = s.savedFilters || [];
+  setList([], null);
+  el.innerHTML = `<div class="search-home">
+${hist.length ? `<div class="section-title row-title">최근 검색 <button class="link" data-act="sh-clear">모두 지우기</button></div><div class="chips">${hist.map((h) => `<span class="chip hist"><button data-act="sh-go" data-q="${esc(h)}">${icon('history')}<span>${esc(h)}</span></button><button class="x" data-act="sh-del" data-q="${esc(h)}" aria-label="${esc(h)} 지우기">${icon('close')}</button></span>`).join('')}</div>` : ''}
+${saved.length ? `<div class="section-title">저장한 필터</div><div class="chips">${saved.map((f) => `<span class="chip hist"><button data-act="sf-apply" data-id="${esc(f.id)}">${icon('filter')}<span>${esc(f.name)}</span></button><button class="x" data-act="sf-del" data-id="${esc(f.id)}" aria-label="${esc(f.name)} 지우기">${icon('close')}</button></span>`).join('')}</div>` : ''}
+<div class="section-title">이렇게도 찾을 수 있어요</div>
+<div class="chips">${EXAMPLES.map((x) => `<button class="chip" data-act="sh-go" data-q="${esc(x)}">${icon('sparkle')}<span>${esc(x)}</span></button>`).join('')}</div>
+<div class="list-head"><button class="btn" data-act="filter-open">${icon('filter')}고급 필터</button></div>
+<div class="empty compact">${icon('search')}<h3>무엇을 들을까요?</h3><p>곡 제목·앨범·아티스트, 한글 초성(ㅂㄴㅇ), 일본어 발음(요아소비 · yoasobi · ヨアソビ),<br>가사 한 줄, "최근 추가한 일본 노래 10곡" 같은 말로도 찾아요. 오타가 조금 있어도 비슷한 곡을 보여 줘요.</p></div>
+</div>`;
+  return { search: true, title: '검색' };
+}
+
 function searchView(el, q = '') {
-  const nq = normSearch(q || '');
-  if (!nq) {
-    setList([], null);
-    el.innerHTML = `<div class="empty">${icon('search')}<h3>무엇을 들을까요?</h3><p>곡 제목, 앨범, 아티스트로 찾아요.<br>한글 초성(예: ㅂㄴㅇ ㅅㅊ)으로도 찾을 수 있어요.</p></div>`;
-    return { search: true, title: '검색' };
+  const raw = (q || '').trim();
+  clearTimeout(lyricsTimer);
+  lyricsToken++;
+  if (!raw && !filterOpen && !hasFilter()) return searchHome(el);
+  const fctx = filterCtx();
+  const nl = raw ? parseNatural(raw, { artists: store.artists.map((a) => a.name) }) : null;
+  lastNl = nl;
+  const af = activeFilter();
+  let base = store.list;
+  if (af && hasFilter()) base = applyFilter(base, { ...af, limit: 0 }, fctx);
+  let text = raw;
+  if (nl) {
+    base = applyFilter(base, { rules: nl.rules, sort: nl.sort }, fctx);
+    text = nl.text || '';
   }
-  const starts = (t) => (t._s.startsWith(nq) ? 0 : 1);
-  const tracks = store.list
-    .filter((t) => matchQuery(t._s, t._c, nq))
-    .sort((a, b) => starts(a) - starts(b) || collator.compare(a.title, b.title))
-    .slice(0, 300);
-  const albums = store.albums.filter((a) => matchQuery(a._s, a._c, nq)).slice(0, 12);
-  const artists = store.artists.filter((ar) => matchQuery(ar._s, ar._c, nq)).slice(0, 8);
-  setList(tracks, { type: 'search', name: `"${q}" 검색 결과` });
+  const nq = normSearch(text);
+  const pk = text ? phoneticKey(text) : '';
+  const usePk = pk.length >= 3 && !/^[ㄱ-ㅎ]+$/.test(nq);
+  const hit = (x) => matchQuery(x._s, x._c, nq) || (usePk && x._p?.includes(pk));
+  let tracks = nq ? base.filter(hit) : base;
+  const sortBy = nl?.sort?.by || af?.sort?.by || null;
+  if (!sortBy) {
+    const rank = (t) => (t._s.startsWith(nq) ? 0 : t._s.includes(nq) ? 1 : 2);
+    tracks = nq ? [...tracks].sort((a, b) => rank(a) - rank(b) || collator.compare(a.title, b.title)) : sortTracks(tracks, 'title');
+  }
+  const limit = nl?.limit || af?.limit || 0;
+  if (limit) tracks = tracks.slice(0, limit);
+  const total = tracks.length;
+  tracks = tracks.slice(0, 300);
+  const plain = !!nq && !nl && !hasFilter();
+  const albums = plain ? store.albums.filter(hit).slice(0, 12) : [];
+  const artists = plain ? store.artists.filter(hit).slice(0, 8) : [];
+  const exact = new Set(tracks.map((t) => t.id));
+  const fuzzy = plain && tracks.length < 8 ? fuzzySearch(store.list, text, 40).filter((t) => !exact.has(t.id)).slice(0, 20) : [];
+  setList(tracks, { type: 'search', name: raw ? `"${raw}" 검색 결과` : '필터 결과' });
+  ctx.groups.fuzzy = { ids: fuzzy.map((t) => t.id), source: { type: 'search', name: `"${raw}" 비슷한 결과` } };
+
   const parts = [];
+  if (filterOpen) parts.push(filterBox());
+  if (nl) {
+    parts.push(`<div class="nl-box">${icon('sparkle')}<span>이렇게 알아들었어요</span><div class="chips">${nl.labels.map((l) => `<span class="chip on">${esc(l)}</span>`).join('')}${nl.text ? `<span class="chip">검색어: ${esc(nl.text)}</span>` : ''}</div><span class="spacer"></span><button class="btn small" data-act="nl-to-filter">${icon('filter')}고급 필터로 고치기</button></div>`);
+  }
   if (artists.length) parts.push(`<div class="section-title">아티스트</div><div class="card">${artists.map(artistRow).join('')}</div>`);
   if (albums.length) parts.push(`<div class="section-title">앨범</div><div class="grid">${albums.map(albumCard).join('')}</div>`);
-  if (tracks.length) parts.push(`<div class="section-title">트랙 · ${tracks.length}곡</div><div class="card list">${tracks.map((t, i) => trackRow(t, i, { sub: `${t.artist} · ${t.album}` })).join('')}</div>`);
-  el.innerHTML = parts.join('') || `<div class="empty">${icon('search')}<h3>"${esc(q)}" 검색 결과가 없어요</h3><p>다른 단어나 초성으로 찾아보세요.</p></div>`;
+  if (tracks.length) {
+    parts.push(`<div class="section-title">트랙</div>
+<div class="list-head"><button class="btn shuffle-all" data-act="shuffle-list">${icon('shuffle')}셔플 재생</button><span class="count">${total > tracks.length ? `${tracks.length} / ${total}곡` : `${total}곡`}</span><span class="spacer"></span>
+  <button class="sort-btn" data-act="search-save">${icon('plus')}재생목록으로 저장</button>${filterOpen ? '' : `<button class="sort-btn" data-act="filter-open">${icon('filter')}고급 필터</button>`}</div>
+<div class="card list">${tracks.map((t, i) => trackRow(t, i, { sub: subFor(t, sortBy) })).join('')}</div>`);
+  } else {
+    parts.push(`<div class="empty compact">${icon('search')}<h3>${raw ? `"${esc(raw)}" ` : ''}검색 결과가 없어요</h3><p>다른 단어나 초성으로 찾아보세요.${hasFilter() ? ' 고급 필터 조건도 확인해 보세요.' : ''}</p>${filterOpen ? '' : `<button class="btn small" data-act="filter-open">${icon('filter')}고급 필터</button>`}</div>`);
+  }
+  if (fuzzy.length) parts.push(`<div class="section-title">혹시 이 곡인가요? · 비슷한 결과</div><div class="card list" data-group="fuzzy">${fuzzy.map((t, i) => trackRow(t, i, { sub: `${t.artist} · ${t.album}` })).join('')}</div>`);
+  const lyricQ = plain && text.length >= 2 ? text : '';
+  if (lyricQ) parts.push('<div id="lyr-results"></div>');
+  el.innerHTML = parts.join('');
+  if (lyricQ) searchLyrics(lyricQ, exact, raw);
   return { search: true, title: '검색' };
+}
+
+// 가사로 찾기: 입력이 잠깐 멈추면 서버에 묻는다
+function searchLyrics(text, exact, raw) {
+  const token = lyricsToken;
+  lyricsTimer = setTimeout(async () => {
+    let results = [];
+    try {
+      ({ results } = await get(`/api/search/lyrics?q=${encodeURIComponent(text)}`));
+    } catch {
+      return;
+    }
+    const box = $('#lyr-results');
+    if (token !== lyricsToken || !box) return;
+    const rows = results.filter((r) => store.tracks.has(r.id) && !exact.has(r.id));
+    if (!rows.length) return;
+    ctx.groups.lyrics = { ids: rows.map((r) => r.id), source: { type: 'search', name: `"${raw}" 가사 검색` } };
+    const snip = (s) => s.replace(/\[[^\]]*\]/g, '').trim();
+    box.innerHTML = `<div class="section-title">가사에서 찾음 · ${rows.length}곡</div><div class="card list" data-group="lyrics">${rows
+      .map((r, i) => trackRow(store.tracks.get(r.id), i, { sub: `“${snip(r.snippet)}”` }))
+      .join('')}</div>`;
+    markPlaying(box);
+  }, 350);
+}
+
+// 검색 기록 (설정에 저장, 최근 20개)
+function saveHistory(list) {
+  store.settings.searchHistory = list;
+  put('/api/settings', { searchHistory: list }).catch(() => {});
+}
+
+export function recordSearch(q) {
+  const s = String(q || '').trim();
+  if (s.length < 2) return;
+  const old = store.settings.searchHistory || [];
+  // 이어서 친 말(요아 → 요아소비)은 앞의 것을 바꾼다
+  const rest = old.filter((x, i) => x !== s && !(i === 0 && (s.startsWith(x) || x.startsWith(s))));
+  saveHistory([s, ...rest].slice(0, 20));
 }
 
 export const views = {
@@ -365,15 +562,18 @@ function sortMenu(kind, labels, anchor) {
 
 function playlistMenu(id, pos) {
   const p = store.playlist(id);
-  if (!p || p.system) return;
+  if (!p) return;
   const player = ctx.player;
   const ids = () => splitEntries(p.entries).visible;
   const src = { type: 'playlist', id, name: p.name };
-  openMenu(
-    [
-      { icon: 'play', label: '재생', run: () => player.playInOrder(ids(), src) },
-      { icon: 'shuffle', label: '셔플 재생', run: () => player.shufflePlay(ids(), src) },
-      '-',
+  const mode = modeLabel(p.mode);
+  const items = [
+    { icon: 'play', label: '재생', run: () => player.playInOrder(ids(), src) },
+    { icon: 'shuffle', label: '셔플 재생', run: () => player.shufflePlay(ids(), src) },
+    '-',
+  ];
+  if (!p.system) {
+    items.push(
       {
         icon: 'edit',
         label: '이름 바꾸기',
@@ -384,6 +584,17 @@ function playlistMenu(id, pos) {
           reloadPlaylists();
         },
       },
+      { icon: 'palette', label: '색·아이콘', run: () => playlistStyleDialog(p) },
+    );
+  }
+  items.push(
+    { icon: 'repeat', label: mode ? `재생 방식 · ${mode}` : '재생 방식 (셔플·반복)', run: () => playlistModeDialog(p) },
+    { icon: 'history', label: '변경 이력 · 되돌리기', run: () => playlistHistoryDialog(p) },
+    { icon: 'copy', label: '중복 곡 정리', run: () => dedupeDialog(p) },
+  );
+  if (!p.system) {
+    items.push(
+      '-',
       {
         icon: 'phone',
         label: p.syncToPhone ? '폰 동기화 끄기' : '폰 동기화 켜기',
@@ -406,7 +617,7 @@ function playlistMenu(id, pos) {
         label: '삭제',
         danger: true,
         run: async () => {
-          const ok = await confirmDialog('재생목록 삭제', `"${p.name}"을(를) 삭제할까요? 곡 파일은 지워지지 않아요.`, { okLabel: '삭제', danger: true });
+          const ok = await confirmDialog('재생목록 삭제', `"${p.name}"을(를) 삭제할까요? 곡 파일은 지워지지 않아요. "지운 재생목록"에서 되살릴 수 있어요.`, { okLabel: '삭제', danger: true });
           if (!ok) return;
           await del(`/api/playlists/${id}`);
           toast('재생목록을 삭제했어요');
@@ -414,9 +625,9 @@ function playlistMenu(id, pos) {
           if (ctx.route?.name === 'playlist') ctx.go('#/playlists');
         },
       },
-    ],
-    pos,
-  );
+    );
+  }
+  openMenu(items, pos);
 }
 
 async function readTextSmart(file) {
@@ -465,7 +676,7 @@ const inUserPlaylist = () => ctx.route?.name === 'playlist' && store.playlist(ct
 
 export function updateSelection() {
   const bar = $('#selbar');
-  for (const r of document.querySelectorAll('#view .row.track')) r.classList.toggle('selected', ctx.selection.has(Number(r.dataset.i)));
+  for (const r of document.querySelectorAll('#view .row.track')) r.classList.toggle('selected', !r.closest('[data-group]') && ctx.selection.has(Number(r.dataset.i)));
   const n = ctx.selection.size;
   if (!n) {
     bar.hidden = true;
@@ -476,6 +687,7 @@ export function updateSelection() {
 <button class="btn small" data-sel="next">${icon('playNext')}다음에 재생</button>
 <button class="btn small" data-sel="queue">${icon('addQueue')}대기열에 추가</button>
 <button class="btn small" data-sel="playlist">${icon('plus')}재생목록에 추가</button>
+<button class="icon-btn" data-sel="more" aria-label="더 보기">${icon('more')}</button>
 ${inUserPlaylist() ? `<button class="btn small danger" data-sel="remove">${icon('trash')}빼기</button>` : ''}
 <button class="icon-btn" data-sel="clear" aria-label="선택 해제">${icon('close')}</button>`;
 }
@@ -486,10 +698,25 @@ function selectedIds() {
 
 export function bindSelectionBar() {
   $('#selbar').addEventListener('click', (e) => {
-    const act = e.target.closest('[data-sel]')?.dataset.sel;
+    const b = e.target.closest('[data-sel]');
+    const act = b?.dataset.sel;
     if (!act) return;
     const ids = selectedIds();
     const idx = [...ctx.selection];
+    if (act === 'more') {
+      // 여러 곡 한 번에: 커버 바꾸기 · 셔플에서 빼기
+      const anyOverride = ids.some((id) => store.tracks.get(id)?.coverOriginal !== undefined);
+      openMenu(
+        [
+          { icon: 'edit', label: `커버 바꾸기 · ${ids.length}곡`, run: () => (changeCover(ids), clearSelection()) },
+          ...(anyOverride ? [{ icon: 'history', label: '원래 커버로', run: () => (resetCover(ids), clearSelection()) }] : []),
+          { icon: 'shuffleOff', label: '셔플에서 빼기', run: () => setNoShuffle(ids, true) },
+          { icon: 'shuffle', label: '셔플에 다시 넣기', run: () => setNoShuffle(ids, false) },
+        ],
+        { anchor: b },
+      );
+      return;
+    }
     if (act === 'next') {
       ctx.player.playNext(ids);
       toast(`${ids.length}곡을 다음에 재생해요`);
@@ -502,7 +729,137 @@ export function bindSelectionBar() {
   });
 }
 
-const menuOpts = (row) => (inUserPlaylist() ? { playlistId: ctx.route.param, index: Number(row.dataset.i) } : {});
+async function setNoShuffle(ids, on) {
+  try {
+    await put('/api/tracks/user', { ids, patch: { noShuffle: on } });
+    for (const id of ids) {
+      const t = store.tracks.get(id);
+      if (t) t.noShuffle = on || undefined;
+    }
+    ctx.player.emit('queue');
+    toast(on ? `${ids.length}곡은 셔플할 때 건너뛰어요` : `${ids.length}곡을 셔플에 다시 넣었어요`);
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+  clearSelection();
+}
+
+const menuOpts = (row) => (inUserPlaylist() && !row.closest('[data-group]') ? { playlistId: ctx.route.param, index: Number(row.dataset.i) } : {});
+
+// 곡 행이 어느 목록에 속하는지: 묶음(ctx.groups: 통계·검색의 가사 결과 등)이 있으면 그 묶음, 아니면 화면 목록
+const listOf = (row) => {
+  const g = row.closest('[data-group]')?.dataset.group;
+  return (g && ctx.groups?.[g]) || (g ? { ids: [], source: null } : ctx.list);
+};
+
+function onFilterChange(t) {
+  if (!filter) filter = emptyFilter();
+  const rules = filter.rules;
+  if (t.dataset.ff !== undefined) {
+    const r = rules[Number(t.dataset.ff)];
+    r.field = t.value;
+    r.op = Object.keys(OPS[FIELDS[r.field].type])[0];
+    r.value = defaultValue(r.field, r.op);
+  } else if (t.dataset.fo !== undefined) {
+    const r = rules[Number(t.dataset.fo)];
+    const wasBetween = r.op === 'between';
+    r.op = t.value;
+    if (wasBetween !== (r.op === 'between')) r.value = defaultValue(r.field, r.op);
+  } else if (t.dataset.fv !== undefined) {
+    const r = rules[Number(t.dataset.fv)];
+    if (t.dataset.k !== undefined) {
+      const v = Array.isArray(r.value) ? r.value.slice() : ['', ''];
+      v[Number(t.dataset.k)] = t.value;
+      r.value = v;
+    } else r.value = t.value;
+  } else if (t.matches('[data-fsort]')) filter.sort = t.value ? { by: t.value, dir: filter.sort?.dir || 'desc' } : null;
+  else if (t.matches('[data-fdir]')) filter.sort = { ...(filter.sort || {}), dir: t.value };
+  else if (t.matches('[data-flimit]')) filter.limit = Math.max(0, Math.floor(Number(t.value) || 0));
+  else return false;
+  ctx.refresh({ keepScroll: true });
+  return true;
+}
+
+function setQuery(q) {
+  const inp = $('#search-input');
+  if (inp) inp.value = q;
+  history.replaceState(history.state, '', `#/search/${encodeURIComponent(q)}`);
+  ctx.refresh({ keepScroll: false });
+}
+
+async function onSearchAct(act, el) {
+  const s = store.settings;
+  switch (act) {
+    case 'sh-go':
+      recordSearch(el.dataset.q);
+      return ctx.go(`#/search/${encodeURIComponent(el.dataset.q)}`);
+    case 'sh-del':
+      saveHistory((s.searchHistory || []).filter((x) => x !== el.dataset.q));
+      return ctx.refresh({ keepScroll: true });
+    case 'sh-clear':
+      saveHistory([]);
+      return ctx.refresh({ keepScroll: true });
+    case 'sf-apply': {
+      const f = (s.savedFilters || []).find((x) => x.id === el.dataset.id);
+      if (!f) return undefined;
+      filter = { ...emptyFilter(), ...structuredClone(f.filter) };
+      filterOpen = true;
+      return ctx.refresh();
+    }
+    case 'sf-del': {
+      const list = (s.savedFilters || []).filter((x) => x.id !== el.dataset.id);
+      store.settings = await put('/api/settings', { savedFilters: list });
+      return ctx.refresh({ keepScroll: true });
+    }
+    case 'filter-open':
+      filterOpen = true;
+      filter ||= emptyFilter();
+      if (!filter.rules.length) filter.rules.push({ field: 'artist', op: 'contains', value: '' });
+      return ctx.refresh({ keepScroll: true });
+    case 'filter-close':
+      filterOpen = false;
+      return ctx.refresh({ keepScroll: true });
+    case 'filter-clear':
+      filter = emptyFilter();
+      filter.rules.push({ field: 'artist', op: 'contains', value: '' });
+      return ctx.refresh({ keepScroll: true });
+    case 'fr-add':
+      filter ||= emptyFilter();
+      filter.rules.push({ field: 'title', op: 'contains', value: '' });
+      ctx.refresh({ keepScroll: true });
+      return setTimeout(() => document.querySelector(`.fb-rule:last-child [data-fv]`)?.focus(), 30);
+    case 'fr-del':
+      filter?.rules.splice(Number(el.dataset.i), 1);
+      return ctx.refresh({ keepScroll: true });
+    case 'filter-save': {
+      const f = activeFilter();
+      if (!hasFilter()) return toast('조건을 하나 이상 채워 주세요');
+      const name = await promptText('필터 저장', '', { okLabel: '저장', placeholder: '필터 이름 (예: 운동할 때)' });
+      if (!name) return undefined;
+      const list = [...(s.savedFilters || []), { id: Math.random().toString(36).slice(2, 10), name, filter: f }];
+      store.settings = await put('/api/settings', { savedFilters: list });
+      return toast(`"${name}" 필터를 저장했어요. 검색 화면 처음에 보여요`);
+    }
+    case 'nl-to-filter': {
+      if (!lastNl) return undefined;
+      filter = { match: 'all', rules: structuredClone(lastNl.rules), sort: lastNl.sort, limit: lastNl.limit || 0 };
+      filterOpen = true;
+      return setQuery(lastNl.text || '');
+    }
+    case 'search-save': {
+      const ids = ctx.list.ids;
+      if (!ids.length) return undefined;
+      const q = $('#search-input')?.value.trim();
+      const name = await promptText('재생목록으로 저장', q || '검색 결과', { okLabel: '만들기' });
+      if (!name) return undefined;
+      const p = await post('/api/playlists', { name, entries: ids });
+      await reloadPlaylists();
+      return toast(`"${p.name}"에 ${ids.length}곡을 넣었어요`);
+    }
+    default:
+      return undefined;
+  }
+}
 
 export function bindViewEvents(root) {
   root.addEventListener('click', async (e) => {
@@ -519,8 +876,17 @@ export function bindViewEvents(root) {
     if (e.target.closest('.drag')) return;
     if (row && !act) {
       const i = Number(row.dataset.i);
-      if (e.ctrlKey || e.metaKey || e.shiftKey || ctx.selection.size) return toggleSelect(i, e.shiftKey);
-      return player.playList(ctx.list.ids, i, { source: ctx.list.source });
+      const grouped = !!row.closest('[data-group]');
+      if (!grouped && (e.ctrlKey || e.metaKey || e.shiftKey || ctx.selection.size)) return toggleSelect(i, e.shiftKey);
+      if (ctx.route?.name === 'search') recordSearch($('#search-input')?.value);
+      const L = listOf(row);
+      return player.playList(L.ids, i, { source: L.source });
+    }
+
+    try {
+      if (act?.startsWith('sh-') || act?.startsWith('sf-') || act?.startsWith('filter-') || act?.startsWith('fr-') || act === 'nl-to-filter' || act === 'search-save') return await onSearchAct(act, actEl);
+    } catch (err) {
+      return toast(err.message, 4000);
     }
 
     switch (act) {
@@ -528,16 +894,32 @@ export function bindViewEvents(root) {
         return player.shufflePlay(ctx.list.ids, ctx.list.source);
       case 'play-list':
         return player.playInOrder(ctx.list.ids, ctx.list.source);
+      case 'group-play':
+      case 'group-shuffle': {
+        const L = ctx.groups?.[actEl.dataset.g];
+        if (!L?.ids.length) return toast('들을 수 있는 곡이 없어요');
+        return act === 'group-play' ? player.playInOrder(L.ids, L.source) : player.shufflePlay(L.ids, L.source);
+      }
       case 'add-list':
         return addToPlaylistDialog(ctx.list.ids);
-      case 'list-more':
+      case 'list-more': {
+        const ids = ctx.list.ids;
+        const anyOverride = ids.some((id) => store.tracks.get(id)?.coverOriginal !== undefined);
         return openMenu(
           [
-            { icon: 'playNext', label: '다음에 재생', run: () => (player.playNext(ctx.list.ids), toast(`${ctx.list.ids.length}곡을 다음에 재생해요`)) },
-            { icon: 'addQueue', label: '재생 대기열에 추가', run: () => (player.addToQueue(ctx.list.ids), toast(`${ctx.list.ids.length}곡을 대기열에 추가했어요`)) },
+            { icon: 'playNext', label: '다음에 재생', run: () => (player.playNext(ids), toast(`${ids.length}곡을 다음에 재생해요`)) },
+            { icon: 'addQueue', label: '재생 대기열에 추가', run: () => (player.addToQueue(ids), toast(`${ids.length}곡을 대기열에 추가했어요`)) },
+            ...(ctx.route?.name === 'album'
+              ? [
+                  '-',
+                  { icon: 'edit', label: '앨범 커버 바꾸기', run: () => changeCover(ids) },
+                  ...(anyOverride ? [{ icon: 'history', label: '원래 커버로', run: () => resetCover(ids) }] : []),
+                ]
+              : []),
           ],
           { anchor: actEl },
         );
+      }
       case 'sort-tracks':
         return sortMenu('tracks', TRACK_SORTS, actEl);
       case 'sort-albums':
@@ -568,6 +950,8 @@ export function bindViewEvents(root) {
       }
       case 'import-playlist':
         return $('#import-file').click();
+      case 'pl-trash':
+        return trashDialog();
       case 'edit-playlist':
         ctx.editing = ctx.editing ? null : ctx.route.param;
         return ctx.refresh({ keepScroll: true });
@@ -579,6 +963,7 @@ export function bindViewEvents(root) {
       default:
         break;
     }
+    if (act) return undefined; // 다른 화면(설정·도구·통계)이 처리하는 버튼
 
     const albumEl = e.target.closest('[data-album]');
     if (albumEl) return ctx.go(`#/album/${encodeURIComponent(albumEl.dataset.album)}`);
@@ -592,15 +977,17 @@ export function bindViewEvents(root) {
   });
 
   root.addEventListener('contextmenu', (e) => {
+    // 키보드의 메뉴 키로 열면 좌표가 0이라 그 줄 옆에 띄운다
+    const at = (el) => (e.clientX || e.clientY ? { x: e.clientX, y: e.clientY } : { anchor: el });
     const row = e.target.closest('.row.track');
     if (row) {
       e.preventDefault();
-      return showTrackMenu(store.tracks.get(row.dataset.id), menuOpts(row), { x: e.clientX, y: e.clientY });
+      return showTrackMenu(store.tracks.get(row.dataset.id), menuOpts(row), at(row));
     }
     const pl = e.target.closest('.row.pl');
     if (pl) {
       e.preventDefault();
-      return playlistMenu(pl.dataset.pl, { x: e.clientX, y: e.clientY });
+      return playlistMenu(pl.dataset.pl, at(pl));
     }
     const albumEl = e.target.closest('[data-album]');
     if (albumEl) {
@@ -613,20 +1000,37 @@ export function bindViewEvents(root) {
           { icon: 'playNext', label: '다음에 재생', run: () => (ctx.player.playNext(ids), toast(`${ids.length}곡을 다음에 재생해요`)) },
           { icon: 'addQueue', label: '재생 대기열에 추가', run: () => (ctx.player.addToQueue(ids), toast(`${ids.length}곡을 대기열에 추가했어요`)) },
           { icon: 'plus', label: '재생목록에 추가', run: () => addToPlaylistDialog(ids) },
+          '-',
+          { icon: 'edit', label: '앨범 커버 바꾸기', run: () => changeCover(ids) },
         ],
-        { x: e.clientX, y: e.clientY },
+        at(albumEl),
       );
     }
     return undefined;
   });
 
   root.addEventListener('change', (e) => {
-    if (e.target.id === 'import-file' && e.target.files.length) importPlaylists([...e.target.files]);
+    if (e.target.id === 'import-file' && e.target.files.length) return importPlaylists([...e.target.files]);
+    if (e.target.closest('.filter-box')) return onFilterChange(e.target);
+    return undefined;
   });
 
   root.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.closest('.filter-box input')) {
+      e.target.blur(); // 값 입력 후 Enter = 적용 (change)
+      return;
+    }
     if (e.key !== 'Enter') return;
     const card = e.target.closest('.album-card');
     if (card) ctx.go(`#/album/${encodeURIComponent(card.dataset.album)}`);
+  });
+
+  // 고급 필터의 '조건 모두/하나라도'
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fmatch] button');
+    if (!b) return;
+    filter ||= emptyFilter();
+    filter.match = b.dataset.v;
+    ctx.refresh({ keepScroll: true });
   });
 }

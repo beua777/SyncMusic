@@ -20,7 +20,8 @@ const MAX_PAIR_ATTEMPTS = 5;
 const CLOCK_SKEW = 5 * 60_000;
 const COPY_MODES = ['playlists', 'all', 'none'];
 // 기본은 양쪽 다 '재생목록에 든 곡만' 옮긴다
-export const DEFAULT_DEVICE_OPTIONS = { phoneToPc: 'playlists', pcToPhone: 'playlists' };
+// confirm: 동기화할 내용이 있으면 PC에서 미리 보고 허락한 뒤에만 동기화
+export const DEFAULT_DEVICE_OPTIONS = { phoneToPc: 'playlists', pcToPhone: 'playlists', confirm: false };
 
 export function deviceOptions(raw = {}) {
   const o = { ...DEFAULT_DEVICE_OPTIONS };
@@ -28,6 +29,7 @@ export function deviceOptions(raw = {}) {
   if (typeof raw.phoneToPc === 'boolean') o.phoneToPc = raw.phoneToPc ? 'playlists' : 'none';
   else if (COPY_MODES.includes(raw.phoneToPc)) o.phoneToPc = raw.phoneToPc;
   if (COPY_MODES.includes(raw.pcToPhone)) o.pcToPhone = raw.pcToPhone;
+  if (typeof raw.confirm === 'boolean') o.confirm = raw.confirm;
   return o;
 }
 
@@ -46,6 +48,8 @@ export class SyncService extends EventEmitter {
     this.pairing = null;
     this.sessions = new Map();
     this.nowPlaying = null;
+    this.lastManifest = new Map(); // 기기 → 폰이 마지막으로 알려 준 곡·재생목록 (미리 보기용)
+    this.previews = new Map();
     this.tmpDir = path.join(dataDir, 'tmp');
     fs.mkdirSync(this.tmpDir, { recursive: true });
     for (const f of fs.readdirSync(this.tmpDir)) {
@@ -159,7 +163,58 @@ export class SyncService extends EventEmitter {
 
   // ───────── 동기화 계획 ─────────
   // 폰이 보낸 곡·재생목록 목록을 보고: 받을 곡, 보낼 곡, 폰에 쓸 재생목록을 정한다.
+  // 폰이 동기화를 시작하면: '확인 후 동기화'가 켜져 있고 바뀔 게 있으면, 허락을 받을 때까지 빈 계획을 돌려준다
   async planSync(dev, m) {
+    this.lastManifest.set(dev.id, { at: Date.now(), m });
+    if (deviceOptions(dev.options).confirm && !(dev.approvedUntil > Date.now())) {
+      const p = await this.preview(dev.id);
+      if (p && !p.empty) {
+        this.log('info', `${dev.name}: 동기화할 내용이 있어서 PC에서 확인을 기다려요`);
+        this.emit('preview', p);
+        const syncId = crypto.randomBytes(8).toString('hex');
+        this.sessions.set(syncId, { deviceId: dev.id, at: Date.now(), pending: new Map(), toPc: {} });
+        return { syncId, pcName: this.pcName, upload: [], download: [], playlists: [], notices: ['PC의 SyncMusic(설정 → 휴대폰 동기화)에서 동기화를 허락해 주세요'] };
+      }
+    }
+    delete dev.approvedUntil; // 한 번 허락하면 한 번 동기화
+    this.previews.delete(dev.id);
+    return this.computePlan(dev, m);
+  }
+
+  // 마지막으로 폰이 알려 준 목록으로, 지금 동기화하면 무엇이 바뀌는지 (아무것도 바꾸지 않고 계산만)
+  async preview(id) {
+    const dev = this.devices[id];
+    const last = this.lastManifest.get(id);
+    if (!dev || !last) return null;
+    const r = await this.computePlan(dev, last.m, { dry: true });
+    const p = {
+      deviceId: id,
+      deviceName: dev.name,
+      at: last.at,
+      upload: r.upload.map((qh) => ({ title: r.phoneTracks.get(qh)?.title || qh, artist: r.phoneTracks.get(qh)?.artist || '' })),
+      download: r.download.map((x) => ({ title: x.title, artist: x.artist })),
+      playlists: [...r.changes, ...r.playlists.map((x) => ({ name: x.name, action: x.action === 'delete' ? 'phoneDelete' : 'phoneWrite', after: x.entries?.length ?? 0 }))],
+      notices: r.notices,
+      approvedUntil: dev.approvedUntil || null,
+    };
+    p.empty = !p.upload.length && !p.download.length && !p.playlists.length;
+    this.previews.set(id, p);
+    return p;
+  }
+
+  approve(id) {
+    const dev = this.devices[id];
+    if (!dev) throw new HttpError(404, '기기를 찾을 수 없어요');
+    dev.approvedUntil = Date.now() + 30 * 60_000;
+    this.store.save();
+    this.log('info', `${dev.name}: PC에서 동기화를 허락했어요 (30분 안에 폰이 연결되면 동기화)`);
+    this.emit('devices');
+    return { approvedUntil: dev.approvedUntil };
+  }
+
+  async computePlan(devIn, m, { dry = false } = {}) {
+    const dev = dry ? structuredClone(devIn) : devIn;
+    const playlists = dry ? new ShadowPlaylists(this.playlists) : this.playlists;
     const opts = deviceOptions(dev.options);
     const lib = this.library;
     const notices = [];
@@ -175,7 +230,7 @@ export class SyncService extends EventEmitter {
     } else if (opts.phoneToPc === 'playlists') {
       notices.push('폰 앱에서 삼성 뮤직 재생목록 폴더를 고르면, 재생목록에 든 곡을 PC로 가져와요');
     }
-    for (const pcId of Object.keys(links)) for (const id of this.playlists.get(pcId)?.entries || []) listed.add(id);
+    for (const pcId of Object.keys(links)) for (const id of playlists.get(pcId)?.entries || []) listed.add(id);
     const wantFromPhone = (qh) => opts.phoneToPc === 'all' || (opts.phoneToPc === 'playlists' && listed.has(qh));
 
     // 1) 폰 곡 → PC 곡 ID (같은 파일이면 같은 ID, 아니면 제목+가수로)
@@ -221,7 +276,7 @@ export class SyncService extends EventEmitter {
         const name = String(pl.name || key).slice(0, 120);
         let pcId = linkByKey.get(key);
         let link = pcId ? links[pcId] : null;
-        let pcList = pcId ? this.playlists.get(pcId) : null;
+        let pcList = pcId ? playlists.get(pcId) : null;
 
         if (link && !pcList) {
           // PC에서 지운 재생목록
@@ -244,13 +299,13 @@ export class SyncService extends EventEmitter {
 
         if (!link) {
           if (ours) continue;
-          const existing = this.playlists.findByName(name);
+          const existing = playlists.findByName(name);
           if (existing && !links[existing.id]) {
             pcList = existing;
             pcId = existing.id;
             link = links[pcId] = { key, file: pl.file || null, base: null, pushed: null };
           } else {
-            pcList = this.playlists.create(name, P, { origin: 'phone', syncToPhone: true });
+            pcList = playlists.create(name, P, { origin: 'phone', syncToPhone: true });
             links[pcList.id] = { key, file: pl.file || null, base: P.slice(), pushed: null };
             seenPc.add(pcList.id);
             continue;
@@ -264,18 +319,18 @@ export class SyncService extends EventEmitter {
         const Peff = P ?? B ?? C;
         const prefer = (Number(pl.mtime) || 0) > (pcList.updatedAt || 0) ? 'phone' : 'pc';
         const M = merge3(B, C, Peff, { prefer });
-        if (!sameList(M, C)) this.playlists.update(pcId, { entries: M }, { source: 'sync' });
+        if (!sameList(M, C)) playlists.update(pcId, { entries: M }, { source: 'sync' });
         results.push({ key, pcId, link, P, ours });
       }
 
       // 폰에 파일이 없는 PC 재생목록
-      for (const pcList of this.playlists.all()) {
+      for (const pcList of playlists.all()) {
         if (seenPc.has(pcList.id) || pcList.system) continue;
         const link = links[pcList.id];
         if (link && (link.base || link.pushed)) {
           // 폰에 있던 파일이 없어짐 = 폰에서 지움 → PC에는 남기고 다시 보내지 않는다
           delete links[pcList.id];
-          this.playlists.update(pcList.id, { syncToPhone: false }, { source: 'sync' });
+          playlists.update(pcList.id, { syncToPhone: false }, { source: 'sync' });
           notices.push(`폰에서 "${pcList.name}" 재생목록이 없어져서 연결을 끊었어요 (PC에는 남아 있어요)`);
           continue;
         }
@@ -291,7 +346,7 @@ export class SyncService extends EventEmitter {
     if (opts.pcToPhone === 'all') {
       for (const t of lib.list()) want.add(t.id);
     } else if (opts.pcToPhone === 'playlists') {
-      for (const pcList of this.playlists.all()) {
+      for (const pcList of playlists.all()) {
         if (links[pcList.id] || (pcList.syncToPhone && !pcList.system)) for (const id of pcList.entries) want.add(id);
       }
     }
@@ -318,7 +373,7 @@ export class SyncService extends EventEmitter {
     const resolvable = (id) => phoneHas.has(id) || phoneTracks.has(id) || dlSet.has(id);
     const toPhoneId = (id) => phoneHas.get(id) || id;
     for (const r of results) {
-      const pcList = this.playlists.get(r.pcId);
+      const pcList = playlists.get(r.pcId);
       const view = pcList.entries.filter(resolvable); // 폰에서 찾을 수 있는 곡만
       if (r.P && sameList(r.P, view)) r.link.base = view.slice();
       const fileContent = r.ours ? r.link.pushed : r.P;
@@ -328,6 +383,7 @@ export class SyncService extends EventEmitter {
       pending.set(r.key, { pcId: r.pcId, entries: view });
     }
 
+    if (dry) return { upload, download, playlists: playlistsOut, notices, changes: playlists.changes, phoneTracks };
     const syncId = crypto.randomBytes(8).toString('hex');
     this.sessions.set(syncId, { deviceId: dev.id, at: Date.now(), pending, toPc: Object.fromEntries(toPc) });
     for (const [k, s] of this.sessions) if (Date.now() - s.at > 60 * 60_000) this.sessions.delete(k);
@@ -523,6 +579,8 @@ export class SyncService extends EventEmitter {
       lastResult: d.lastResult,
       options: deviceOptions(d.options),
       linkedPlaylists: Object.keys(d.links || {}).length,
+      approvedUntil: d.approvedUntil > Date.now() ? d.approvedUntil : null,
+      preview: this.previews.get(d.id) || null,
     }));
   }
 
@@ -557,6 +615,56 @@ export class SyncService extends EventEmitter {
 
   flush() {
     this.store.flush();
+  }
+}
+
+// 미리 보기용 재생목록: 진짜는 건드리지 않고 복사본에서 바꿔 보며, 바뀔 내용을 적어 둔다
+class ShadowPlaylists {
+  constructor(real) {
+    this.real = real;
+    this.copies = new Map();
+    this.created = [];
+    this.changes = [];
+  }
+
+  get(id) {
+    if (this.copies.has(id)) return this.copies.get(id);
+    const p = this.real.get(id);
+    if (!p) return null;
+    const c = { ...p, entries: [...p.entries] };
+    this.copies.set(id, c);
+    return c;
+  }
+
+  all() {
+    return [...this.real.all().map((p) => this.get(p.id)), ...this.created];
+  }
+
+  findByName(name) {
+    const k = normName(name);
+    return this.all().find((p) => !p.system && normName(p.name) === k) || null;
+  }
+
+  create(name, entries = [], extra = {}) {
+    const p = { id: `preview-${this.created.length}`, name, entries: [...entries], system: false, syncToPhone: true, ...extra };
+    this.created.push(p);
+    this.copies.set(p.id, p);
+    this.changes.push({ name, action: 'create', after: entries.length });
+    return p;
+  }
+
+  update(id, patch = {}) {
+    const p = this.get(id);
+    if (!p) return null;
+    if (Array.isArray(patch.entries)) {
+      const before = p.entries;
+      const after = patch.entries;
+      this.changes.push({ name: p.name, action: 'update', before: before.length, after: after.length, added: after.filter((x) => !before.includes(x)).length, removed: before.filter((x) => !after.includes(x)).length });
+      p.entries = [...after];
+    }
+    if (typeof patch.syncToPhone === 'boolean' && !patch.syncToPhone) this.changes.push({ name: p.name, action: 'unlink' });
+    if (typeof patch.syncToPhone === 'boolean') p.syncToPhone = patch.syncToPhone;
+    return p;
   }
 }
 

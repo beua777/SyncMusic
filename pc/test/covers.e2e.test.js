@@ -49,7 +49,7 @@ test('커버는 곡마다 따로, 같은 그림은 하나로, 태그에 없으�
   const old = new Date(Date.now() - 86_400_000);
   fs.utimesSync(stale, old, old);
 
-  const app = await createApp({ dataDir: data, musicFolders: [music], ports: { ui: 0 }, lan: false, onQuit: () => {} });
+  const app = await createApp({ dataDir: data, musicFolders: [music], ports: { ui: 0 }, lan: false, system: false, onQuit: () => {} });
   await app.start();
   await app.initialScan;
   t.after(async () => {

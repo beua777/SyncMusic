@@ -14,9 +14,9 @@ const M = `${STORAGE}/Music`;
 const PL = `${STORAGE}/Download/SamsungMusic/Playlists`;
 
 test('예전 옵션 값(true/false)은 새 선택지로 바뀜', () => {
-  assert.deepEqual(deviceOptions({ phoneToPc: true }), { phoneToPc: 'playlists', pcToPhone: 'playlists' });
-  assert.deepEqual(deviceOptions({ phoneToPc: false, pcToPhone: 'all' }), { phoneToPc: 'none', pcToPhone: 'all' });
-  assert.deepEqual(deviceOptions({ phoneToPc: 'weird' }), { phoneToPc: 'playlists', pcToPhone: 'playlists' });
+  assert.deepEqual(deviceOptions({ phoneToPc: true }), { phoneToPc: 'playlists', pcToPhone: 'playlists', confirm: false });
+  assert.deepEqual(deviceOptions({ phoneToPc: false, pcToPhone: 'all' }), { phoneToPc: 'none', pcToPhone: 'all', confirm: false });
+  assert.deepEqual(deviceOptions({ phoneToPc: 'weird', confirm: true }), { phoneToPc: 'playlists', pcToPhone: 'playlists', confirm: true });
 });
 
 test('.smpl 기기: 재생목록 곡만 PC로, PC에서 고친 재생목록은 .smpl로 다시 씀', async (t) => {
@@ -24,7 +24,7 @@ test('.smpl 기기: 재생목록 곡만 PC로, PC에서 고친 재생목록은 .
   const pcMusic = path.join(root, 'pc-music');
   fs.mkdirSync(pcMusic, { recursive: true });
   fs.writeFileSync(path.join(pcMusic, 'PC 노래.wav'), song(11, 'PC 노래', 'PC가수'));
-  const app = await createApp({ dataDir: path.join(root, 'data'), musicFolders: [pcMusic], ports: { ui: 0, sync: 0, discovery: 0 }, lanHost: '127.0.0.1', onQuit: () => {} });
+  const app = await createApp({ dataDir: path.join(root, 'data'), musicFolders: [pcMusic], ports: { ui: 0, sync: 0, discovery: 0 }, lanHost: '127.0.0.1', system: false, onQuit: () => {} });
   await app.start();
   await app.initialScan;
   t.after(async () => {

@@ -299,9 +299,18 @@ export class Effects {
     this.g = canvas.getContext('2d');
     this.viz = viz;
     this.isNpOpen = isNpOpen;
-    this.opts = { effect: 'off', amount: 50, scope: 'np', color: 'natural', react: true, coverBeat: 'off', accent: [29, 111, 230], period: rainbowPeriod(), dark: false };
+    this.opts = { effect: 'off', amount: 50, scope: 'np', color: 'natural', react: true, coverBeat: 'off', accent: [29, 111, 230], period: rainbowPeriod(), dark: false, fps: 30 };
     this.parts = [];
     this.raf = 0;
+    this.timer = 0;
+    this.focused = document.hasFocus();
+    addEventListener('focus', () => {
+      this.focused = true;
+      this.wake();
+    });
+    addEventListener('blur', () => {
+      this.focused = false;
+    });
     this.last = 0;
     this.w = 0;
     this.h = 0;
@@ -312,7 +321,7 @@ export class Effects {
     this.glow = null;
     addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => this.wake());
-    for (const e of ['play', 'pause', 'ended']) viz.audio.addEventListener(e, () => this.wake());
+    for (const e of ['play', 'pause', 'ended']) viz.engine.onAny(e, () => this.wake());
   }
 
   setCover(art, glow) {
@@ -323,7 +332,7 @@ export class Effects {
   configure(o) {
     const prev = this.opts;
     this.opts = { ...prev, ...o };
-    const rebuild = prev.effect !== this.opts.effect || prev.dark !== this.opts.dark || prev.color !== this.opts.color;
+    const rebuild = prev.effect !== this.opts.effect || prev.dark !== this.opts.dark || prev.color !== this.opts.color || prev.fps !== this.opts.fps;
     if (rebuild) this.parts = [];
     this.resize();
     this.wake();
@@ -342,8 +351,9 @@ export class Effects {
     return this.opts.coverBeat !== 'off' && this.isNpOpen() && this.viz.playing;
   }
 
+  // 화면 전체를 덮는 캔버스라 해상도를 낮춰 그린다 (눈·꽃잎은 원래 부드러운 그림이라 티가 거의 안 남)
   resize() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, this.opts.fps >= 60 ? 1.5 : 1);
     this.w = innerWidth;
     this.h = innerHeight;
     if (this.canvas.width !== Math.round(this.w * dpr) || this.canvas.height !== Math.round(this.h * dpr)) {
@@ -369,12 +379,24 @@ export class Effects {
     const on = !document.hidden && this.showing();
     this.canvas.classList.toggle('on', on);
     if (!this.beating()) this.resetCover();
-    if (!this.raf && !document.hidden && (on || this.beating())) this.raf = requestAnimationFrame((t) => this.frame(t));
+    if (!this.raf && !this.timer && !document.hidden && (on || this.beating())) this.raf = requestAnimationFrame((t) => this.frame(t));
+  }
+
+  // 정한 횟수만큼만 그린다 (기본 초당 30번, 창이 뒤에 있으면 15번). 사이에는 타이머로 쉰다
+  next(now) {
+    const fps = this.focused ? this.opts.fps || 30 : Math.min(this.opts.fps || 30, 15);
+    const wait = 1000 / fps - (performance.now() - now) - 3;
+    if (wait > 4) {
+      this.timer = setTimeout(() => {
+        this.timer = 0;
+        this.raf = requestAnimationFrame((t) => this.frame(t));
+      }, wait);
+    } else this.raf = requestAnimationFrame((t) => this.frame(t));
   }
 
   frame(now) {
     this.raf = 0;
-    const dt = this.last ? Math.min(0.05, (now - this.last) / 1000) : 1 / 60;
+    const dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 1 / 60;
     this.last = now;
     const showing = this.showing();
     const beating = this.beating();
@@ -382,7 +404,7 @@ export class Effects {
     if (showing) this.drawParticles(dt, now / 1000, this.opts.react ? e : 0);
     if (beating) this.applyBeat(e);
     else this.resetCover();
-    if (!document.hidden && (showing || beating)) this.raf = requestAnimationFrame((t) => this.frame(t));
+    if (!document.hidden && (showing || beating)) this.next(now);
     else this.last = 0;
   }
 

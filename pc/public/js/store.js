@@ -1,4 +1,6 @@
 // 화면 쪽 데이터: 곡, 재생목록, 앨범·아티스트·폴더 묶음
+import { phoneticKey } from './phonetic.js';
+import { decompose } from './search.js';
 import { chosung, collator, normSearch } from './util.js';
 
 const UNKNOWN = '<알 수 없음>';
@@ -23,6 +25,10 @@ export const store = {
   on(evt, fn) {
     if (!this.listeners.has(evt)) this.listeners.set(evt, new Set());
     this.listeners.get(evt).add(fn);
+  },
+
+  off(evt, fn) {
+    this.listeners.get(evt)?.delete(fn);
   },
 
   emit(evt, data) {
@@ -100,6 +106,7 @@ export const store = {
       delete a.counts;
       a._s = normSearch(`${a.name} ${a.artist}`);
       a._c = chosung(a._s);
+      a._p = `${phoneticKey(a.name)}|${phoneticKey(a.artist)}`;
     }
     for (const ar of artists.values()) {
       ar.albums = [...ar.albumKeys].map((k) => albums.get(k)).sort((x, y) => (y.year || 0) - (x.year || 0) || collator.compare(x.name, y.name));
@@ -108,6 +115,7 @@ export const store = {
       delete ar.albumKeys;
       ar._s = normSearch(ar.name);
       ar._c = chosung(ar._s);
+      ar._p = phoneticKey(ar.name);
     }
     for (const f of folders.values()) f.tracks.sort((x, y) => collator.compare(basename(x.path), basename(y.path)));
 
@@ -139,8 +147,11 @@ export const store = {
   },
 };
 
+// 검색용: 글자 그대로(_s) · 초성(_c) · 소리 열쇠(_p: 가나·한글·한자 읽기를 같은 로마자로) · 자모(_f: 오타 허용)
 function prep(t) {
   t._s = normSearch(`${t.title} ${t.artist} ${t.album}`);
   t._c = chosung(t._s);
+  t._p = [phoneticKey(t.title), phoneticKey(t.artist), phoneticKey(t.album), t.reading || ''].join('|');
+  t._f = decompose(`${t.title} ${t.artist} ${t.album}`);
   return t;
 }

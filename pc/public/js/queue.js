@@ -20,6 +20,10 @@ export class PlayQueue {
     this.source = null;
     this.rngState = (seed ?? Math.floor(Math.random() * 2 ** 32)) >>> 0;
     this.map = new Map();
+    // 셔플 방식 (player가 설정에서 넣어 준다. 저장하지 않음). 기본값이면 삼성 뮤직과 같은 고른 셔플(S1~S13)
+    //   mode: random · smart(취향 무게)  spread: 0~1 가수·앨범을 고르게 흩기  noRepeatArtist: 같은 가수 연달아 막기
+    //   weight(id) · artist(id) · album(id) · excluded(id): 곡 정보를 알려 주는 함수
+    this.opts = { mode: 'random', spread: 0, noRepeatArtist: false, weight: null, artist: null, album: null, excluded: null };
     if (state) this.load(state);
   }
 
@@ -66,7 +70,7 @@ export class PlayQueue {
         this.order = this.shuffleKeys(keys);
       } else {
         const first = keys[clamp(startIndex, 0, keys.length - 1)];
-        this.order = [first, ...this.shuffleKeys(keys.filter((k) => k !== first))];
+        this.order = [first, ...this.shuffleKeys(keys.filter((k) => k !== first), first)];
       }
       this.pos = 0;
     } else {
@@ -99,7 +103,7 @@ export class PlayQueue {
     const keys = this.items.map((it) => it.key);
     if (on) {
       const rest = keys.filter((k) => k !== cur);
-      this.order = cur === null ? this.shuffleKeys(rest) : [cur, ...this.shuffleKeys(rest)];
+      this.order = cur === null ? this.shuffleKeys(rest) : [cur, ...this.shuffleKeys(rest, cur)];
       this.pos = this.order.length ? 0 : -1;
     } else {
       this.order = keys;
@@ -128,6 +132,16 @@ export class PlayQueue {
     if (!this.order.length) return null;
     // 한 곡 반복은 곡이 '끝나서' 넘어갈 때만 (S6). 다음 버튼을 누르면 다음 곡으로 간다
     if (auto && this.repeat === 'one') return { id: this.current, restart: true };
+    // 셔플 중에는 '셔플 제외' 곡을 건너뛴다 (다 제외면 그냥 다음 곡)
+    let r = null;
+    for (let i = 0; i < this.order.length; i++) {
+      r = this.step1(auto);
+      if (r.ended || !this.skipped(r.id)) return r;
+    }
+    return r;
+  }
+
+  step1(auto) {
     if (this.pos < this.order.length - 1) {
       this.pos++;
       return { id: this.current };
@@ -136,6 +150,17 @@ export class PlayQueue {
     this.wrapAround();
     if (auto && this.repeat === 'off') return { id: this.current, ended: true }; // 반복 안 함: 한 번 듣고 멈춤 (S8)
     return { id: this.current, wrapped: true };
+  }
+
+  skipped(id) {
+    return this.shuffle && !!this.opts.excluded?.(id);
+  }
+
+  // 곡이 끝났을 때 다음 곡으로 넘어가는지 (크로스페이드를 미리 시작해도 되는지) — 상태는 바꾸지 않는다
+  hasAutoNext() {
+    if (!this.order.length || this.repeat === 'one') return false;
+    for (let i = this.pos + 1; i < this.order.length; i++) if (!this.skipped(this.map.get(this.order[i]).id)) return true;
+    return this.repeat === 'all';
   }
 
   // 이전 곡으로 (3초 규칙은 player.js가 재생 시간을 보고 판단한다)
@@ -298,12 +323,34 @@ export class PlayQueue {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  // Fisher–Yates: 모든 순서가 같은 확률, 한 바퀴 동안 중복 없음 (S1)
-  shuffleKeys(keys) {
-    const a = keys.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(this.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
+  // 섞기. 기본은 Fisher–Yates: 모든 순서가 같은 확률, 한 바퀴 동안 중복 없음 (S1).
+  // 취향 셔플이면 무게 있는 무작위 순서, 그다음 가수·앨범 흩기 → 같은 가수 연속 막기 → 셔플 제외 곡은 맨 뒤로.
+  // prevKey: 바로 앞에 나올 곡 (지금 곡) — 같은 가수 연속 막기에 쓴다
+  shuffleKeys(keys, prevKey = null) {
+    const o = this.opts;
+    const idOf = (k) => this.map.get(k)?.id;
+    let a;
+    if (o.mode === 'smart' && o.weight) {
+      // Efraimidis–Spirakis: u^(1/w)가 큰 순서 = 무게에 비례해 앞쪽에 나올 확률이 큼 (그래도 한 바퀴에 한 번씩)
+      a = keys
+        .map((k) => [k, this.random() ** (1 / Math.max(0.05, Number(o.weight(idOf(k))) || 1))])
+        .sort((x, y) => y[1] - x[1])
+        .map((x) => x[0]);
+    } else {
+      a = keys.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(this.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+    }
+    if (o.spread > 0 && o.artist) {
+      if (o.album) a = spreadOut(a, (k) => o.album(idOf(k)), o.spread * 0.5, () => this.random());
+      a = spreadOut(a, (k) => o.artist(idOf(k)), o.spread, () => this.random());
+    }
+    if (o.noRepeatArtist && o.artist) a = avoidAdjacent(a, (k) => o.artist(idOf(k)), prevKey === null ? null : o.artist(idOf(prevKey)));
+    if (o.excluded) {
+      const ex = (k) => o.excluded(idOf(k));
+      a = [...a.filter((k) => !ex(k)), ...a.filter(ex)];
     }
     return a;
   }
@@ -311,4 +358,58 @@ export class PlayQueue {
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// 같은 무리(가수·앨범) 곡이 한쪽에 몰리지 않게 고르게 흩는다 (Martin Fiedler의 '고르게 섞기').
+// 무리마다 곡을 전체 길이에 고르게 놓을 자리(target)를 정하고, 원래 순서와 strength만큼 섞어 다시 줄 세운다.
+// 무리 안의 순서(취향 무게로 정한 앞뒤)는 그대로 둔다. 무리를 모르는 곡(null)은 제자리.
+export function spreadOut(keys, groupOf, strength, rand = Math.random) {
+  const n = keys.length;
+  if (n < 3 || strength <= 0) return keys.slice();
+  const groups = new Map();
+  keys.forEach((k, i) => {
+    const g = groupOf(k);
+    if (g === null || g === undefined) return;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(k);
+  });
+  const target = new Map();
+  for (const list of groups.values()) {
+    const m = list.length;
+    const gap = n / m;
+    const offset = rand() * gap;
+    list.forEach((k, j) => target.set(k, offset + j * gap + (rand() - 0.5) * gap * 0.3));
+  }
+  return keys
+    .map((k, i) => [k, target.has(k) ? (1 - strength) * i + strength * target.get(k) : i])
+    .sort((x, y) => x[1] - y[1])
+    .map((x) => x[0]);
+}
+
+// 같은 무리가 연달아 나오면 뒤에서 다른 무리 곡을 찾아 자리를 바꾼다 (모르는 무리 null은 늘 다름).
+// 끝부분이라 뒤에 바꿀 곡이 없으면, 앞쪽에서 바꿔도 새로 붙는 곳이 생기지 않는 자리를 찾는다
+export function avoidAdjacent(keys, groupOf, prevGroup = null) {
+  const a = keys.slice();
+  const same = (x, y) => x !== null && x !== undefined && x === y;
+  const g = (i) => (i < 0 ? prevGroup : i >= a.length ? undefined : groupOf(a[i]));
+  for (let i = 0; i < a.length; i++) {
+    const before = g(i - 1);
+    if (!same(g(i), before)) continue;
+    let j = i + 1;
+    while (j < a.length && same(g(j), before)) j++;
+    if (j < a.length) {
+      [a[i], a[j]] = [a[j], a[i]];
+      continue;
+    }
+    // 앞쪽 p와 바꾸기: p 자리에 올 곡(a[i])과 i 자리에 올 곡(a[p])이 둘 다 이웃과 겹치지 않을 때만
+    for (let p = i - 2; p >= 0; p--) {
+      const gp = g(p);
+      const gi = g(i);
+      if (same(gp, g(i - 1)) || same(gp, g(i + 1))) continue;
+      if (same(gi, g(p - 1)) || same(gi, g(p + 1))) continue;
+      [a[i], a[p]] = [a[p], a[i]];
+      break;
+    }
+  }
+  return a;
 }
